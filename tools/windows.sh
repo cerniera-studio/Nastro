@@ -74,7 +74,8 @@ wait_playing() {
 carries() {  # what happened ($what), the position before
   local before=$2; sleep 3
   if ! alive; then warn "Playback through $what: the emulator stopped responding; not counted"; return; fi
-  set -- $(deck)
+  # Read a few times: just after another app opens, run-as can come back empty
+  for try in 1 2 3 4 5; do set -- $(deck); [ -n "$1" ] && break; sleep 2; done
   if [ -z "$1" ] || [ -z "$before" ]; then warn "Playback through $what: nothing could be read back from the emulator; not counted"
   elif [ "$1" = true ] && python3 -c "import sys; sys.exit(0 if float('$2') > float('$before') else 1)"; then
     note "Playback: carried on through $what ($before s -> $2 s)"
