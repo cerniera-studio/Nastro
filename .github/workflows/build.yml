@@ -39,10 +39,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        repeat: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -77,7 +73,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-${{ strategy.job-index }}
+          name: windows
           path: |
             shot-win-*.png
             windows.txt
