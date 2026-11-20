@@ -33,6 +33,16 @@ sleep 30
 adb shell input keyevent 82
 adb shell settings put system accelerometer_rotation 0
 adb shell settings put system user_rotation 0
+for a in window_animation_scale transition_animation_scale animator_duration_scale; do adb shell settings put global $a 0; done
+# No "isn't responding" dialogs, and three-button navigation, so a stalled launcher can't hold up
+# input (as seen in Fold Taskbar's and Solco's runs)
+adb shell settings put global hide_error_dialogs 1
+adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton
+adb shell am force-stop com.google.android.apps.nexuslauncher
+# Music access again after the reboot (the grant before it didn't hold), and check it took
+adb shell pm grant $PKG android.permission.READ_MEDIA_AUDIO
+adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
+adb shell dumpsys package $PKG | grep -E "READ_MEDIA_AUDIO|POST_NOTIFICATIONS" | head -4
 adb logcat -c
 # The media scanner, in case the boot scan hasn't reached the tracks yet
 adb shell content call --uri content://media --method scan_volume --arg external_primary >/dev/null 2>&1
