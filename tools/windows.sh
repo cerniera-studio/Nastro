@@ -20,8 +20,8 @@ shot() { adb exec-out screencap -p > "shot-win-$1.png"; }
 
 adb install -r Nastro.apk
 python3 tools/make_tracks.py /tmp/tracks
-adb shell mkdir -p "/sdcard/Music/Nastro Test"
-for f in /tmp/tracks/*; do adb push "$f" "/sdcard/Music/Nastro Test/" >/dev/null; done
+adb shell mkdir -p "/sdcard/Music/NastroTest"
+for f in /tmp/tracks/*; do adb push "$f" "/sdcard/Music/NastroTest/" >/dev/null; done
 adb shell pm grant $PKG android.permission.READ_MEDIA_AUDIO
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 adb shell settings put global enable_freeform_support 1
