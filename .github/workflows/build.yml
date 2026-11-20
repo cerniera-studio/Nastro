@@ -33,3 +33,46 @@ jobs:
         with:
           name: Nastro-apk
           path: app/build/outputs/apk/debug/*.apk
+
+  # Playback through a turn, a pop-up window being shrunk and another app in front (19 Nov 2026).
+  windows-test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Nastro-apk
+
+      - name: Name the APK
+        run: mv "$(ls *.apk | head -1)" Nastro.apk
+
+      - name: ffmpeg, to tag the test tracks as one album
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim
+          disable-animations: true
+          script: bash tools/windows.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows
+          path: |
+            shot-win-*.png
+            windows.txt
+            app-log-windows.txt

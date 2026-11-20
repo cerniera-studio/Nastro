@@ -74,7 +74,48 @@ class MainActivity : Activity() {
         }
         start()
         Crash.report(this)
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) testHooks(root)
     }
+
+    // ---- Debug builds only, for the windows test (19 Nov 2026) ----------------------------------
+
+    private val testLoop = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * --es play first: once the library is in, put its first tape in the deck and press play.
+     * Every half second, files/deck.json records the deck's mode, whether sound is playing, where
+     * in the track it is, and the window's size, so the test can see playback carry on through a
+     * turn, a resize and another app taking focus.
+     */
+    private fun testHooks(root: android.view.View) {
+        var wantPlay = intent?.getStringExtra("play") == "first"
+        intent?.removeExtra("play")
+        var said = ""
+        val tick = object : Runnable {
+            override fun run() {
+                val now = "loaded=${Library.loaded} tapes=${Library.tapes.size} songs=${Library.songs.size} " +
+                    "permission=${checkSelfPermission(audioPermission) == PackageManager.PERMISSION_GRANTED} deck=${Deck.tape?.album} mode=${Deck.mode} playing=${Audio.isPlaying()}"
+                if (now != said) { said = now; android.util.Log.i("NastroTest", now) }
+                if (wantPlay && Library.loaded) {
+                    val t = Library.tapes.firstOrNull { it !== Library.BLANK }
+                    when {
+                        t == null -> {}
+                        Deck.tape?.albumId != t.albumId -> Deck.load(t, true)
+                        Deck.mode == Deck.Mode.STOP -> Deck.press(Deck.Key.PLAY)
+                        else -> wantPlay = false
+                    }
+                }
+                runCatching {
+                    java.io.File(filesDir, "deck.json").writeText("{\"mode\": \"${Deck.mode}\", \"playing\": ${Audio.isPlaying()}, " +
+                        "\"pos\": ${Audio.positionSecs()}, \"tapes\": ${Library.tapes.count { it !== Library.BLANK }}, \"view\": [${root.width}, ${root.height}]}")
+                }
+                testLoop.postDelayed(this, 500)
+            }
+        }
+        testLoop.post(tick)
+    }
+
+    override fun onDestroy() { testLoop.removeCallbacksAndMessages(null); super.onDestroy() }
 
     @Deprecated("Pre-33 back handling")
     override fun onBackPressed() {
