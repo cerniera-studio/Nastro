@@ -39,6 +39,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        opts:
+          - "-gpu swiftshader_indirect"
+          - "-gpu swiftshader_indirect -noaudio"
+          - "-gpu swangle_indirect"
+          - "-gpu swangle_indirect -noaudio"
     steps:
       - uses: actions/checkout@v4
 
@@ -64,14 +72,14 @@ jobs:
           api-level: 33
           arch: x86_64
           target: google_apis
-          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim
+          emulator-options: -no-window ${{ matrix.opts }} -no-boot-anim
           disable-animations: true
           script: bash tools/windows.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows
+          name: windows-${{ strategy.job-index }}
           path: |
             shot-win-*.png
             windows.txt
