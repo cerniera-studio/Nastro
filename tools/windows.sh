@@ -50,9 +50,9 @@ sleep 5
 # What the media index holds (for the log)
 adb shell content query --uri content://media/external/audio/media --projection _display_name:is_music:duration:album:artist 2>&1 | head -10 | tee -a $out
 
-# The main screen, upright
-adb shell wm density 280; adb shell wm size 1503x1568; sleep 3
-
+# Nastro is open (the Walkman unfolded, silent) when it has most of the main screen, and closed and
+# playing on the cover or in a share of the main screen (StageView.onMainScreen). So: the turn on
+# the cover's shape; the resize in a pop-up window that stays a share of the main screen.
 set +x
 task() {  # "<id> <mode>" of the task whose affinity is exactly $1
   adb shell dumpsys activity activities | python3 -c "
@@ -80,38 +80,44 @@ carries() {  # what happened ($what), the position before
   fi
 }
 
-# ---- 1. A turn (full screen)
+# ---- 1. A turn, on the cover's shape (full screen)
+adb shell wm density 320; adb shell wm size 823x1920; sleep 3
 adb shell am force-stop $PKG; adb shell run-as $PKG rm -f files/deck.json
 adb shell am start -W --windowingMode 1 -n $PKG/.MainActivity --es play first >/dev/null
 if ! wait_playing; then
   set -- $(deck)
-  warn "Playback never started (tapes found: ${4:-?}); checks skipped"
-  adb logcat -d -s NastroTest:I Nastro:W | tail -15
-  shot not-playing
+  warn "Playback never started on the cover (tapes found: ${4:-?}); check 1 skipped"
+  adb logcat -d -s NastroTest:I Nastro:W | tail -8
+  shot not-playing-cover
 else
-  shot playing
+  shot playing-cover
   set -- $(deck); p=$2
-  adb shell settings put system user_rotation 1; sleep 2; shot playing-turned
-  what="a turn"; carries "$what" "$p"
+  adb shell settings put system user_rotation 1; sleep 2; shot playing-cover-turned
+  what="turning the cover"; carries "$what" "$p"
   adb shell settings put system user_rotation 0; sleep 2
+fi
+adb shell am force-stop $PKG; sleep 1
 
-  # ---- 2. A pop-up window, shrunk
-  adb shell am force-stop $PKG; adb shell run-as $PKG rm -f files/deck.json
-  adb shell am start -W --windowingMode 5 -n $PKG/.MainActivity --es play first >/dev/null; sleep 3
-  set -- $(task $PKG); id=$1; mode=$2
-  echo "task: $id $mode" | tee -a $out
-  if [ "$mode" != freeform ]; then
-    warn "Pop-up window: the emulator would not open one (mode ${mode:-none}); checks 2 and 3 skipped"
-  elif ! wait_playing; then
+# ---- 2. A pop-up window on the main screen, a share of it, resized; 3. another app in front
+adb shell wm density 280; adb shell wm size 1503x1568; sleep 3
+adb shell run-as $PKG rm -f files/deck.json
+adb shell am start -W --windowingMode 5 -n $PKG/.MainActivity --es play first >/dev/null; sleep 2
+set -- $(task $PKG); id=$1; mode=$2
+echo "task: $id $mode" | tee -a $out
+if [ "$mode" != freeform ]; then
+  warn "Pop-up window: the emulator would not open one (mode ${mode:-none}); checks 2 and 3 skipped"
+else
+  adb shell am task resize "$id" 0 0 900 1568
+  if ! wait_playing; then
     warn "Pop-up window: playback never started; checks 2 and 3 skipped"
+    adb logcat -d -s NastroTest:I | tail -6
   else
-    adb shell am task resize "$id" 0 0 1503 1568; sleep 3
+    shot playing-popup
     set -- $(deck); p=$2; w0=$3
-    adb shell am task resize "$id" 0 0 740 1568; shot playing-popup-narrow
-    what="shrinking a pop-up window"; carries "$what" "$p"
+    adb shell am task resize "$id" 0 0 640 1568; shot playing-popup-narrow
+    what="resizing a pop-up window (900 to 640 px wide)"; carries "$what" "$p"
     set -- $(deck); echo "width: $w0 -> $3" | tee -a $out
 
-    # ---- 3. Another app in front
     set -- $(deck); p=$2
     adb shell am start -W -a android.settings.SETTINGS >/dev/null; sleep 1; shot another-app
     what="another app taking focus"; carries "$what" "$p"
