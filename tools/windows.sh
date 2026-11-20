@@ -21,7 +21,7 @@ shot() { adb exec-out screencap -p > "shot-win-$1.png"; }
 adb install -r Nastro.apk
 python3 tools/make_tracks.py /tmp/tracks
 adb shell mkdir -p "/sdcard/Music/Nastro Test"
-for f in /tmp/tracks/*.wav; do adb push "$f" "/sdcard/Music/Nastro Test/" >/dev/null; done
+for f in /tmp/tracks/*; do adb push "$f" "/sdcard/Music/Nastro Test/" >/dev/null; done
 adb shell pm grant $PKG android.permission.READ_MEDIA_AUDIO
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 adb shell settings put global enable_freeform_support 1
@@ -37,6 +37,8 @@ adb logcat -c
 # The media scanner, in case the boot scan hasn't reached the tracks yet
 adb shell content call --uri content://media --method scan_volume --arg external_primary >/dev/null 2>&1
 sleep 5
+# What the media index holds (for the log)
+adb shell content query --uri content://media/external/audio/media --projection _display_name:is_music:duration:album:artist 2>&1 | head -10 | tee -a $out
 
 # The main screen, upright
 adb shell wm density 280; adb shell wm size 1503x1568; sleep 3
