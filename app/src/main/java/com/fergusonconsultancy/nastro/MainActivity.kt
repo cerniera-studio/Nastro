@@ -90,8 +90,12 @@ class MainActivity : Activity() {
     private fun testHooks(root: android.view.View) {
         var wantPlay = intent?.getStringExtra("play") == "first"
         intent?.removeExtra("play")
+        var said = ""
         val tick = object : Runnable {
             override fun run() {
+                val now = "loaded=${Library.loaded} tapes=${Library.tapes.size} songs=${Library.songs.size} " +
+                    "permission=${checkSelfPermission(audioPermission) == PackageManager.PERMISSION_GRANTED} deck=${Deck.tape?.album} mode=${Deck.mode} playing=${Audio.isPlaying()}"
+                if (now != said) { said = now; android.util.Log.i("NastroTest", now) }
                 if (wantPlay && Library.loaded) {
                     val t = Library.tapes.firstOrNull { it !== Library.BLANK }
                     when {

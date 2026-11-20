@@ -118,7 +118,9 @@ object Library {
     fun load(ctx: Context, done: (List<Tape>) -> Unit) {
         val app = ctx.applicationContext
         io.execute {
-            val (albums, all) = runCatching { query(app) }.getOrDefault(Pair(emptyList(), emptyList()))
+            val (albums, all) = runCatching { query(app) }
+                .onFailure { android.util.Log.w("Nastro", "library query failed", it) }
+                .getOrDefault(Pair(emptyList(), emptyList()))
             main.post {
                 albumTapes = albums; songs = all; songById = all.associateBy { it.id }
                 tapes = mixtapes() + albums; loaded = true

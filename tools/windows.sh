@@ -76,6 +76,7 @@ adb shell am start -W --windowingMode 1 -n $PKG/.MainActivity --es play first >/
 if ! wait_playing; then
   set -- $(deck)
   warn "Playback never started (tapes found: ${4:-?}); checks skipped"
+  adb logcat -d -s NastroTest:I Nastro:W | tail -15
   shot not-playing
 else
   shot playing
