@@ -64,7 +64,9 @@ jobs:
           api-level: 33
           arch: x86_64
           target: google_apis
-          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim
+          # swangle, not swiftshader: with swiftshader the emulator died or hung as soon as a
+          # pop-up window opened or was resized (20 Nov 2026)
+          emulator-options: -no-window -gpu swangle_indirect -no-boot-anim
           disable-animations: true
           script: bash tools/windows.sh
 
