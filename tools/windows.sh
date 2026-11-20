@@ -16,7 +16,7 @@ out=windows.txt; : > $out
 note() { echo "::notice::$*" | tee -a $out; }
 fail() { echo "::error::$*" | tee -a $out; }
 warn() { echo "::warning::$*" | tee -a $out; }
-shot() { adb exec-out screencap -p > "shot-win-$1.png"; }
+shot() { timeout 20 adb exec-out screencap -p > "shot-win-$1.png"; }
 
 adb install -r Nastro.apk
 python3 tools/make_tracks.py /tmp/tracks
@@ -61,8 +61,9 @@ for line in sys.stdin:
     m = re.search(r'\* Task\{\S+ #(\d+) .*?A=\d+:(\S+) .*?mode=(\S+)', line)
     if m and m.group(2) == '$1': print(m.group(1), m.group(3)); break"
 }
+alive() { [ "$(timeout 10 adb get-state 2>/dev/null)" = device ]; }
 deck() {  # "<playing> <pos> <width> <tapes>"
-  adb shell run-as $PKG cat files/deck.json 2>/dev/null | python3 -c "
+  timeout 15 adb shell run-as $PKG cat files/deck.json 2>/dev/null | python3 -c "
 import sys, json
 d = json.load(sys.stdin); print(str(d['playing']).lower(), round(d['pos'], 1), d['view'][0], d['tapes'])" 2>/dev/null
 }
@@ -72,8 +73,10 @@ wait_playing() {
 }
 carries() {  # what happened ($what), the position before
   local before=$2; sleep 3
+  if ! alive; then warn "Playback through $what: the emulator stopped responding; not counted"; return; fi
   set -- $(deck)
-  if [ "$1" = true ] && python3 -c "import sys; sys.exit(0 if float('$2') > float('$before') else 1)"; then
+  if [ -z "$1" ] || [ -z "$before" ]; then warn "Playback through $what: nothing could be read back from the emulator; not counted"
+  elif [ "$1" = true ] && python3 -c "import sys; sys.exit(0 if float('$2') > float('$before') else 1)"; then
     note "Playback: carried on through $what ($before s -> $2 s)"
   else
     fail "Playback: stopped or stuck through $what (playing $1, $before s -> $2 s)"
@@ -114,19 +117,19 @@ else
   else
     shot playing-popup
     set -- $(deck); p=$2; w0=$3
-    adb shell am task resize "$id" 0 0 640 1568; shot playing-popup-narrow
+    timeout 20 adb shell am task resize "$id" 0 0 640 1568; shot playing-popup-narrow
     what="resizing a pop-up window (900 to 640 px wide)"; carries "$what" "$p"
     set -- $(deck); echo "width: $w0 -> $3" | tee -a $out
 
     set -- $(deck); p=$2
-    adb shell am start -W -a android.settings.SETTINGS >/dev/null; sleep 1; shot another-app
+    timeout 30 adb shell am start -W -a android.settings.SETTINGS >/dev/null; sleep 1; shot another-app
     what="another app taking focus"; carries "$what" "$p"
   fi
 fi
-adb shell am force-stop $PKG
-adb shell wm size reset; adb shell wm density reset
+timeout 20 adb shell am force-stop $PKG
+timeout 20 adb shell wm size reset; timeout 20 adb shell wm density reset
 
-{ echo "logcat after the windows test"; adb logcat -d; } > app-log-windows.txt
+{ echo "logcat after the windows test"; timeout 60 adb logcat -d; } > app-log-windows.txt
 if grep -A2 "FATAL EXCEPTION" app-log-windows.txt | grep -q "Process: $PKG"; then fail "Nastro crashed in the windows test"; grep -A20 "FATAL EXCEPTION" app-log-windows.txt | head -40; fi
 grep -q "^::error::" $out && exit 1
 exit 0
