@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,7 +22,19 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      - name: Check the signing secret
+        if: github.event_name != 'pull_request'
+        env:
+          CERNIERA_SIGNING_PASSWORD: ${{ secrets.CERNIERA_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$CERNIERA_SIGNING_PASSWORD" ]; then
+            echo "::error::The org secret CERNIERA_SIGNING_PASSWORD is missing, so this build can't be signed with the app's key"
+            exit 1
+          fi
+
       - name: Build debug APK
+        env:
+          CERNIERA_SIGNING_PASSWORD: ${{ secrets.CERNIERA_SIGNING_PASSWORD }}
         shell: bash
         run: |
           set +e
@@ -33,6 +48,19 @@ jobs:
         with:
           name: Nastro-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Name the APK for release
+        run: cp "$(ls app/build/outputs/apk/debug/*.apk | head -1)" Nastro.apk
+
+      # Builds on main are releases; other branches publish a pre-release, so Officina can list and install them
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Nastro build ${{ github.run_number }}${{ github.ref != 'refs/heads/main' && format(' ({0})', github.ref_name) || '' }}
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          files: Nastro.apk
 
   # Playback through a turn, a pop-up window being shrunk and another app in front (19 Nov 2026).
   windows-test:
