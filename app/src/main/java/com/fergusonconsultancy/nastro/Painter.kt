@@ -921,7 +921,8 @@ class Painter(ctx: Context) {
     private val LCD_BOT = 0xFF8A8370.toInt()
     private val LCD_ON = 0xFF1F1C15.toInt()
     /** The keys' backlight after dark: warm, as a car's dashboard is at night. */
-    private val GLOW = 0xFFFFC46B.toInt()
+    private val GLOW = 0xFFFFB347.toInt()
+    private val GLOW_CORE = 0xFFFFF3DC.toInt()
     private val LCD_SHADOW = 0x4228241A
 
     private fun lcd(c: Canvas, L: RectF, detail: Float, live: Live) {
@@ -955,9 +956,7 @@ class Painter(ctx: Context) {
         }
         if (tq > 0.001f) {
             c.saveLayerAlpha(G, (tq * 255).toInt())
-            c.rotate(if (live.glyph > 0) 90f else -90f, G.centerX(), G.centerY())
-            val Q = RectF(G.centerX() - G.height() / 2, G.centerY() - G.width() / 2, G.centerX() + G.height() / 2, G.centerY() + G.width() / 2)
-            lcdStack(c, Q, detail, live)
+            lcdSide(c, G, detail, live)
             c.restore()
         }
         // one highlight across the glass
@@ -1024,60 +1023,70 @@ class Painter(ctx: Context) {
     }
 
     /**
-     * The readout stood upright on a strip that is tall and narrow (24 Nov 2026): the tape and battery
-     * icons, then what the deck is doing, then the direction and counter, then the title as a ticker,
-     * a few letters to a line, rising a line at a time like a stock ticker's board.
+     * The readout on its side (24 Nov 2026, second version). Mechack found the first, the whole readout
+     * stood upright with the title broken into five-letter lines, clumsy. Now only what is read at a
+     * glance turns upright, in a block at the strip's top end: a pictogram of what the deck is doing
+     * and the counter, large. The title runs along the strip's length in one line, as the NASTRO
+     * wordmark and the printed legends do, read like a spine. A fine rule divides the two.
      */
-    private fun lcdStack(c: Canvas, Q: RectF, detail: Float, live: Live) {
-        val w = Q.width()
-        // icons: the tape on the left, the battery on the right
-        val ih = w * 0.09f; val iy = Q.top + Q.height() * 0.035f
-        val ix = Q.left + w * 0.08f; val rx = Q.right - w * 0.08f
-        lcdInk(c, 1f) { col ->
-            s.color = col; s.strokeWidth = ih * 0.18f; r.set(ix, iy, ix + ih * 1.7f, iy + ih); c.drawRoundRect(r, ih * 0.25f, ih * 0.25f, s)
-            fill(col); c.drawCircle(ix + ih * 0.55f, iy + ih * 0.5f, ih * 0.18f, p); c.drawCircle(ix + ih * 1.15f, iy + ih * 0.5f, ih * 0.18f, p)
-            s.strokeWidth = ih * 0.16f; c.drawRect(rx - ih * 1.9f, iy, rx - ih * 0.2f, iy + ih, s)
-            c.drawRect(rx - ih * 0.2f, iy + ih * 0.3f, rx, iy + ih * 0.7f, p); c.drawRect(rx - ih * 1.75f, iy + ih * 0.18f, rx - ih * 0.75f, iy + ih * 0.82f, p)
-        }
-        if (Deck.autoRev || Deck.megaBass) lcdInk(c, 1f) { col ->
-            print(c, listOfNotNull(if (Deck.megaBass) "MB" else null, if (Deck.autoRev) "AR" else null).joinToString(" "),
-                Q.centerX(), iy + ih * 0.98f, ih * 1.1f, col, true, Paint.Align.CENTER)
-        }
-        // what the deck is doing, as large as four letters allow
-        val cw = w * 0.84f / (4 * 1.32f); val ch = cw / 0.6f
-        var y = iy + ih * 1.9f
-        seg14text(c, modeWord(live), Q.left + w * 0.08f, y, cw, ch, 4, 1f)
-        y += ch * 1.35f
-        // the direction, then the counter
-        val cw2 = cw * 0.8f; val ch2 = cw2 / 0.6f
-        seg14text(c, if (Deck.dir > 0) "F" else "R", Q.left + w * 0.08f, y, cw2, ch2, 1, 1f)
-        seg14text(c, Deck.counter().toString().padStart(3, '0'), Q.right - w * 0.08f - cw2 * 1.32f * 3 + cw2 * 0.32f, y, cw2, ch2, 3, 1f)
-        y += ch2 * 1.5f
-        // the title, a line at a time
+    private fun lcdSide(c: Canvas, G: RectF, detail: Float, live: Live) {
+        val gh = G.height()
+        val blen = gh * 1.3f
+        // the screen's top end of the strip: the face's right end when turned anticlockwise, left when clockwise
+        val atRight = live.glyph > 0
+        val B = if (atRight) RectF(G.right - blen, G.top, G.right, G.bottom) else RectF(G.left, G.top, G.left + blen, G.bottom)
+        val S = if (atRight) RectF(G.left, G.top, B.left - gh * 0.12f, G.bottom) else RectF(B.right + gh * 0.12f, G.top, G.right, G.bottom)
+        // the rule between them
+        val rx = if (atRight) B.left - gh * 0.06f else B.right + gh * 0.06f
+        lcdInk(c, 0.55f) { col -> s.color = col; s.strokeWidth = max(dp(0.8f), gh * 0.012f); c.drawLine(rx, G.top + gh * 0.16f, rx, G.bottom - gh * 0.16f, s) }
+
+        // the block, upright on screen
+        c.save()
+        c.rotate(if (atRight) 90f else -90f, B.centerX(), B.centerY())
+        val w = gh; val Q = RectF(B.centerX() - w / 2, B.centerY() - blen / 2, B.centerX() + w / 2, B.centerY() + blen / 2)
+        val ps = w * 0.4f
+        pictogram(c, modeWord(live), Q.centerX() - w * 0.06f, Q.top + Q.height() * 0.1f + ps / 2, ps)
+        // the tape's direction, small, beside it
+        seg14text(c, if (Deck.dir > 0) "F" else "R", Q.right - w * 0.24f, Q.top + Q.height() * 0.1f + ps * 0.18f, w * 0.1f, w * 0.17f, 1, 0.8f)
+        val cw = w * 0.78f / (3 * 1.32f) + w * 0.01f; val ch = cw / 0.62f
+        seg14text(c, Deck.counter().toString().padStart(3, '0'), Q.centerX() - (cw * 1.32f * 3 - cw * 0.32f) / 2, Q.bottom - Q.height() * 0.1f - ch, cw, ch, 3, 1f)
+        c.restore()
+
+        // the title along the strip, one line, stepping like the readout's own marquee
         val cur = Deck.current()
         val txt = if (live.volAge < 1300) "VOL " + "-".repeat((live.volume * 10).toInt().coerceIn(0, 10))
             else ((cur.track?.number ?: 0).toString().padStart(2, '0') + " " + (cur.track?.title ?: "")).uppercase()
-        val tw = w * 0.84f / (6 * 1.32f); val th = tw / 0.6f
-        val lines = tickerLines(txt, 6)
-        val fit = ((Q.bottom - w * 0.06f - y) / (th * 1.45f)).toInt().coerceAtLeast(1)
-        val shown = if (lines.size <= fit) lines else {
-            val run = lines + listOf("") + lines
-            val step = ((android.os.SystemClock.uptimeMillis() / 1100) % (lines.size + 1)).toInt()
-            run.subList(step, step + fit)
-        }
-        for (ln in shown) { seg14text(c, ln, Q.left + w * 0.08f, y, tw, th, 6, 0.25f + 0.75f * detail); y += th * 1.45f }
+        val th = gh * 0.4f; val tw = th * 0.6f
+        val room = ((S.width() * 0.92f) / (tw * 1.32f)).toInt().coerceAtLeast(1)
+        val shown = if (txt.length > room) {
+            val run = "$txt    $txt    "
+            val step = ((android.os.SystemClock.uptimeMillis() / 260) % (txt.length + 4)).toInt()
+            run.substring(step, (step + room).coerceAtMost(run.length))
+        } else txt
+        seg14text(c, shown, S.left + S.width() * 0.04f, S.centerY() - th / 2, tw, th, room, 0.25f + 0.75f * detail)
     }
 
-    /** Words broken into lines of [n] characters, long words cut. */
-    private fun tickerLines(t: String, n: Int): List<String> {
-        val out = ArrayList<String>(); var cur = ""
-        for (word in t.split(' ').filter { it.isNotEmpty() }) {
-            var wd = word
-            while (wd.length > n) { if (cur.isNotEmpty()) { out += cur; cur = "" }; out += wd.take(n); wd = wd.drop(n) }
-            cur = if (cur.isEmpty()) wd else if (cur.length + 1 + wd.length <= n) "$cur $wd" else { out += cur; wd }
+    /** LCD pictograms for what the deck is doing, centred on [x], [y], [size] tall. */
+    private fun pictogram(c: Canvas, mode: String, x: Float, y: Float, size: Float) {
+        val h = size / 2
+        lcdInk(c, 1f) { col ->
+            fill(col); path.reset()
+            fun tri(l: Float, r0: Float, right: Boolean) {
+                if (right) { path.moveTo(l, y - h); path.lineTo(r0, y); path.lineTo(l, y + h) } else { path.moveTo(r0, y - h); path.lineTo(l, y); path.lineTo(r0, y + h) }
+                path.close()
+            }
+            when (mode) {
+                "PLAY" -> tri(x - h * 0.75f, x + h * 0.95f, true)
+                "FF", "AMS" -> { tri(x - h * 1.1f, x, true); tri(x, x + h * 1.1f, true) }
+                "REW" -> { tri(x - h * 1.1f, x, false); tri(x, x + h * 1.1f, false) }
+                "OPEN" -> { path.moveTo(x - h, y + h * 0.1f); path.lineTo(x, y - h); path.lineTo(x + h, y + h * 0.1f); path.close()
+                    path.addRect(x - h, y + h * 0.45f, x + h, y + h, Path.Direction.CW) }
+                "HOLD" -> { path.addRect(x - h * 0.75f, y - h * 0.05f, x + h * 0.75f, y + h, Path.Direction.CW)
+                    s.color = col; s.strokeWidth = h * 0.22f; r.set(x - h * 0.48f, y - h * 0.95f, x + h * 0.48f, y + h * 0.2f); c.drawArc(r, 180f, 180f, false, s) }
+                else -> path.addRect(x - h * 0.8f, y - h * 0.8f, x + h * 0.8f, y + h * 0.8f, Path.Direction.CW)
+            }
+            c.drawPath(path, p)
         }
-        if (cur.isNotEmpty()) out += cur
-        return out
     }
 
     /** LCD ink: draw twice, first as the segments' shadow on the reflector, then the segments. */
@@ -1200,7 +1209,10 @@ class Painter(ctx: Context) {
             // the edge where the dome turns away
             s.strokeWidth = dp(0.6f); s.color = Color.BLACK.a(0.28f); c.drawCircle(0f, 0f, R - dp(0.3f), s)
             // Hold: the caps sink flush and go dim, a lock you can see
-            if (live.holdSink > 0.01f) { fill(Color.BLACK.a(0.34f * live.holdSink)); c.drawCircle(0f, 0f, R, p) }
+            // After dark (24 Nov 2026, second version) the room's light has gone from the caps too: they dim,
+            // so the backlit symbols read as light on a dark key rather than amber on cream
+            val dim = max(0.34f * live.holdSink, 0.62f * live.dark)
+            if (dim > 0.01f) { fill(Color.BLACK.a(dim)); c.drawCircle(0f, 0f, R, p) }
             // engraved symbol
             val q = fr * 0.34f
             path.reset()
@@ -1218,14 +1230,21 @@ class Painter(ctx: Context) {
             val symCol = blend(F.sym, F.sym or 0xFF000000.toInt(), br)
             // after dark the symbol is lit from behind, a dashboard's warm glow; a waiting tape's play
             // key glows faintly, breathing, as if it were ready
-            val breath = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 2400.0 * 2 * PI).toFloat()
-            val inv = if (K.key == Deck.Key.PLAY) live.invite * (0.35f + 0.65f * breath) else 0f
-            val glow = max(live.dark * (1 - live.holdSink * 0.7f), inv)
+            val glow = live.dark * (1 - live.holdSink * 0.7f)
             if (glow > 0.01f) {
-                p.setShadowLayer(R * 0.22f, 0f, 0f, GLOW.a(0.85f * glow))
-                fill(blend(symCol, GLOW, 0.9f * glow)); c.drawPath(path, p); p.clearShadowLayer()
+                // lit from behind: a warm-white core in an amber halo
+                p.setShadowLayer(R * 0.3f, 0f, 0f, GLOW.a(0.95f * glow))
+                fill(blend(symCol, GLOW_CORE, glow)); c.drawPath(path, p)
+                p.setShadowLayer(R * 0.08f, 0f, 0f, GLOW_CORE.a(0.7f * glow)); c.drawPath(path, p); p.clearShadowLayer()
             } else { fill(symCol); c.drawPath(path, p) }
             c.restore()
+            // a waiting tape: play's cap is ringed with a faint breathing light, the symbol left clear
+            if (K.key == Deck.Key.PLAY && live.invite > 0.01f) {
+                val breath = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 2400.0 * 2 * PI).toFloat()
+                val a = live.invite * (0.3f + 0.7f * breath)
+                s.strokeWidth = R * 0.07f; s.color = GLOW.a(0.75f * a)
+                s.setShadowLayer(R * 0.18f, 0f, 0f, GLOW.a(a)); c.drawCircle(0f, 0f, R * 1.02f, s); s.clearShadowLayer()
+            }
             c.restore()
         }
     }
