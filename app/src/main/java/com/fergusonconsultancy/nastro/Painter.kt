@@ -44,6 +44,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     lateinit var lcd: RectF
     lateinit var chan: RectF
     lateinit var keys: List<KeyR>
+    /** The same keys in the reverse order along their channel: where they go when the row reads the other way. */
+    var keysRev: List<KeyR> = emptyList()
     /** The touch area over the tape: the lens, or the compartment. */
     lateinit var win: RectF
     var k = 1f; var tx = 0f; var ty = 0f
@@ -168,6 +170,7 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             win = RectF(ln)
             chan = RectF(x + 0.055f * w, ld.bottom + 0.05f * w, x + 0.945f * w, ld.bottom + 0.24f * w)
             keys = keyRow(chan)
+            keysRev = keyRow(chan, reversed = true)
             val st = RectF(x + 0.07f * w, chan.bottom + 0.035f * w, x + 0.93f * w, chan.bottom + 0.205f * w)
             strip(st)
             // the volume wheel stands proud of the body's edge; full-bleed, it emerges from the screen's edge
@@ -274,9 +277,9 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
          * Four round keys, spaced to be found blind as the WM-EX610's were; play the largest,
          * with room round it for its ring of beads.
          */
-        fun keyRow(chan: RectF): List<KeyR> {
-            val scale = floatArrayOf(1f, 1.22f, 1f, 1f)
-            val order = listOf(Deck.Key.REW, Deck.Key.PLAY, Deck.Key.STOP, Deck.Key.FF)
+        fun keyRow(chan: RectF, reversed: Boolean = false): List<KeyR> {
+            val scale = floatArrayOf(1f, 1.22f, 1f, 1f).let { if (reversed) it.reversedArray() else it }
+            val order = listOf(Deck.Key.REW, Deck.Key.PLAY, Deck.Key.STOP, Deck.Key.FF).let { if (reversed) it.reversed() else it }
             val d = minOf(chan.height() * 0.8f, chan.width() / 5.7f)
             val gap = (chan.width() - scale.sum() * d) / 5
             var kx = chan.left + gap
@@ -748,6 +751,13 @@ class Painter(ctx: Context) {
         var lifting: Boolean = false, var volume: Float = 0.7f, var volAge: Long = 9999,
         /** The open body's AA springing up for the settings: 0 seated, 1 up. */
         var cellPop: Float = 0f,
+        /**
+         * The keys adapting to how the phone is held (24 Nov 2026): [glyph] turns each key's symbol, in
+         * degrees, so it reads upright whichever way the face is turned; [order], 0 to 1, slides the keys
+         * along their channel into the reverse order, so the column always reads rewind, play, stop,
+         * fast forward from the top.
+         */
+        var glyph: Float = 0f, var order: Float = 0f,
     )
 
     /**
@@ -1012,9 +1022,15 @@ class Painter(ctx: Context) {
             Deck.Key.REW -> m == Deck.Mode.REW || (m == Deck.Mode.AMS && Deck.v * Deck.dir < 0)
             Deck.Key.STOP -> false
         }
-        for (K in G.keys) {
+        for (K0 in G.keys) {
+            // where this key sits in the forward row and in the reversed one; it glides between them
+            val Ka = G.keys.first { it.key == K0.key }
+            val Kb = G.keysRev.firstOrNull { it.key == K0.key } ?: Ka
+            val o = live.order
+            val K = K0
             val d = max(if (latched(K.key)) 0.55f else 0f, if (live.pressed == K.key) max(0f, 1 - live.pressAge / 170f) else 0f)
-            val cx = K.cx; val cy = K.cy; val R = K.r
+            val cx = Ka.cx + (Kb.cx - Ka.cx) * o; val cy = Ka.cy + (Kb.cy - Ka.cy) * o
+            val R = Ka.r + (Kb.r - Ka.r) * o
             // Sunk into the body, as on the WM-EX610: a deep round hole whose upper lip is in shadow
             // and whose lower lip catches the light; the wall falls away dark above and lit below.
             val wellR = if (K.key == Deck.Key.PLAY) R * 1.36f else R * 1.16f
@@ -1064,8 +1080,11 @@ class Painter(ctx: Context) {
                 Deck.Key.FF -> { path.moveTo(-q, -q * 0.75f); path.lineTo(0f, 0f); path.lineTo(-q, q * 0.75f); path.close(); path.moveTo(0f, -q * 0.75f); path.lineTo(q, 0f); path.lineTo(0f, q * 0.75f); path.close() }
                 Deck.Key.REW -> { path.moveTo(q, -q * 0.75f); path.lineTo(0f, 0f); path.lineTo(q, q * 0.75f); path.close(); path.moveTo(0f, -q * 0.75f); path.lineTo(-q, 0f); path.lineTo(0f, q * 0.75f); path.close() }
             }
+            // the symbol turns to read upright however the phone is held
+            c.save(); c.rotate(live.glyph)
             c.save(); c.translate(0f, dp(0.5f)); fill(Color.WHITE.a(0.5f)); c.drawPath(path, p); c.restore()
             fill(F.sym); c.drawPath(path, p)
+            c.restore()
             c.restore()
         }
     }

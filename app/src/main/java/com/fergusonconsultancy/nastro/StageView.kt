@@ -205,6 +205,14 @@ class StageView(ctx: Context) : View(ctx) {
     private val pr get() = when (turn) { 90 -> paddingTop; 270 -> paddingBottom; else -> paddingRight }
     private val pb get() = when (turn) { 90 -> paddingRight; 270 -> paddingLeft; else -> paddingBottom }
 
+    // The keys adapt (24 Nov 2026): the face stays fixed to the hardware, but the symbols on its keys
+    // swivel to stand upright and the keys glide into an order that reads from the top
+    private var glyphNow = 0f
+    private var orderNow = 0f
+    private val glyphTarget get() = when (turn) { 90 -> 90f; 270 -> -90f; else -> 0f }
+    // turned anticlockwise, the row's left end (rewind) would sit at the bottom: reverse it
+    private val orderTarget get() = if (turn == 90) 1f else 0f
+
     private fun setTurn(t: Int) {
         turn = t
         turnM.reset()
@@ -401,6 +409,12 @@ class StageView(ctx: Context) : View(ctx) {
         live.pressed = pressed; live.pressAge = now - pressedAt; live.proximity = proximity; live.lifting = lifting
         live.volume = volume(); live.volAge = now - volAt
         live.cellPop = cellPop(now)
+        // the symbols swivel first, then the keys glide into place
+        glyphNow += (glyphTarget - glyphNow) * (1 - exp(-dt / 0.09f)); if (abs(glyphTarget - glyphNow) < 0.2f) glyphNow = glyphTarget
+        val glyphDone = abs(glyphTarget - glyphNow) < 25f
+        if (glyphDone || orderNow != orderTarget) orderNow += (orderTarget - orderNow) * (1 - exp(-dt / 0.12f))
+        if (abs(orderTarget - orderNow) < 0.003f) orderNow = orderTarget
+        live.glyph = glyphNow; live.order = orderNow
         if (open) {
             if (swing >= 0.999f) {
                 drawShelf(c)
@@ -448,7 +462,7 @@ class StageView(ctx: Context) : View(ctx) {
         painter.edge(c, fw.toFloat(), fh.toFloat(), screenRadius())
 
         val busy = Deck.animating() || Deck.mode == Deck.Mode.PLAY || swing < 1f || shake > 0 || abs(view - viewTarget) > 0.001f ||
-            !scroller.isFinished || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
+            !scroller.isFinished || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
         if (busy) postInvalidateOnAnimation()
     }
 
@@ -672,7 +686,9 @@ class StageView(ctx: Context) : View(ctx) {
                 scroller.forceFinished(true)
                 wakeLegends(G, x, y)
                 if (!open || swing >= 0.999f) {
-                    for (K in G.keys) if (K.rect.near(x, y, dp(4f))) {
+                    // touches follow where the keys are going
+                    val row = if (orderTarget > 0.5f && G.keysRev.isNotEmpty()) G.keysRev else G.keys
+                    for (K in row) if (K.rect.near(x, y, dp(4f))) {
                         pressed = K.key; pressedAt = SystemClock.uptimeMillis(); pressKey(K.key); invalidate(); return true
                     }
                 }
