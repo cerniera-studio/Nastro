@@ -176,3 +176,15 @@ The eighth review had stayed on its branch (life-size) and never reached main, s
 **One size, the real one.** The tape had been matched in pixels across the two screens on the belief that they share one density. They don't seem to: the open phone's 1880 px span a screen about 136 mm wide, roughly 350 ppi, against the cover's roughly 420 (estimates from the screenshots and the phone's published size, not measured). Equal pixels made the open tape the physically smaller one. Each screen now draws the tape as near its real size as it has room for, so the size the two share is the real one.
 
 **The cover on its side turns with the phone** (Mechack, from the iPhone Duo's Duoman). A Walkman doesn't rearrange itself when turned: the face stays as it is on the hardware, readout at the camera end, and the whole of it turns with the phone. Touches are turned back to match, and the light stays fixed to the face.
+
+## Tenth review, 24 Nov: controls that adapt
+
+Mechack: Nastro is a fusion of the 90s and 00s with something forward-looking, so the controls should be dynamic and adaptive. The body keeps its hardware logic; the controls answer to how the phone is held, what the deck is doing and the room. From six ideas he chose four (thumb-following keys and keys rising to the finger were left out).
+
+**On its side, the controls turn upright.** Folded and turned, the face stays fixed to the hardware, but each key's symbol swivels to stand upright, then the keys glide along their channel so the column reads rewind, play, stop, fast forward from the top. The readout turns with them: its rows fade into a stacked readout across the strip (icons, what the deck is doing, direction and counter, then the title rising a line at a time like a ticker board).
+
+**Keys that answer to what's going on.** Hold sinks the keys flush and dims them, a lock you can see. A tape waiting, stopped, makes play glow faintly, breathing. With auto reverse on, its legend and lamp wake in a side's last 20 seconds of music.
+
+**The tabletop deck.** Open, on its side and stood half open (read from the hinge's angle sensor, between about 30° and 145°), the phone is a deck: the compartment stands in the upper half, the lower half lies flat as a front panel with the readout and switches across the top and a full-width bank of keys below. A deck's compartment is shut behind its window, so the door reads as shut: the tape plays and the keys work. Laid flat, the door is open again and the tape stops, as unfolding does. The shelf is not reachable in tabletop; lay it flat to change tapes.
+
+**Keys lit by the room.** The light sensor, smoothed over about a second: below about 40 lux the keys' symbols are backlit with a warm glow, like a car's dashboard at night, fully by 4 lux; from about 1,500 lux (daylight) to 15,000 (sun) their engraving reads deeper.
