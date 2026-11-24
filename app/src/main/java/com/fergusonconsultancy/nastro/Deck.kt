@@ -58,7 +58,7 @@ object Deck {
     /** The capstan: driven by the motor while the head is in. */
     var capstanAng = 0f; private set
     const val GUIDE_R = 1.4f
-    const val PINCH_R = 2.9f
+    const val PINCH_R = 2.6f
     const val CAPSTAN_R = 0.85f
     var door = 0f; private set
     private var doorTarget = 0f

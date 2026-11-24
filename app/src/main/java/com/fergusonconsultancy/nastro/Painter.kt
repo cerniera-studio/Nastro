@@ -192,11 +192,16 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
         // compartment is barely bigger than the cassette, so this one is too: the tape at its real size
         // (the screen's own pixels per millimetre) where it fits, the hole closing round it with the
         // head assembly along its open edge, the AA bay below, the pair centred in the body.
-        private const val CLEAR = 1.2f      // mm round the shell
-        private const val HEADS = 6.4f      // mm of head plate, pinch roller arm and capstan beyond the shell's foot
+        // 24 Nov 2026, Mechack: still too small, room to spare. Upright, the half screen's width is all
+        // that limits the tape, and the margins took a fifth of it. Now the head assembly tucks under the
+        // shell's foot as a real one does (only the head, roller and plate edge show beyond it), the
+        // clearance is a real deck's, and the hole runs edge to edge across the body: its lip only shows
+        // above and below, running on under the hinge and the bezel at the sides.
+        private const val CLEAR = 0.6f      // mm round the shell
+        private const val HEADS = 3.8f      // mm of head plate, pinch roller and capstan beyond the shell's foot
         private const val CELL = 22f        // mm: the gumstick cell (16.7 wide) and its clearance
-        private const val GAP = 4f          // mm of body between the two holes
-        private const val LIP = 2.6f        // mm: each hole's raised lip
+        private const val GAP = 3f          // mm of body between the two holes
+        const val LIP = 1.8f                // mm: each hole's raised lip
 
         private fun bayTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF?, mm: Float): PlayerGeom = PlayerGeom(Kind.BAY, x, w).apply {
             this.y = y; this.h = h
@@ -206,8 +211,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val cwMm = CH + HEADS + CLEAR * 2
             val groupMm = CW + CLEAR * 2 + GAP + LIP * 4 + CELL
             // the width is what limits the tape upright, so the hole uses the body's whole width, edge to edge
-            val bw = (bleed?.width() ?: w) * 0.975f
-            var kk = min(bw / (cwMm + LIP * 2), (h * 0.97f) / groupMm)
+            val bw = (bleed?.width() ?: w) * 0.995f
+            var kk = min(bw / cwMm, (h * 0.97f) / groupMm)
             if (mm > 0f) kk = min(kk, mm)
             k = kk
             // 14 Nov 2026, Mechack: use the space at either end. The tape can't grow (the width holds it),
@@ -243,7 +248,7 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             // lying flat: the tape across, its foot and the heads down at the hinge, the AA bay standing beside it
             val cwMm = CW + CLEAR * 2; val chMm = CH + HEADS + CLEAR * 2
             val groupMm = cwMm + GAP + LIP * 4 + CELL
-            var kk = min((w * 0.97f) / groupMm, (h * 0.97f) / (chMm + LIP * 2))
+            var kk = min((w * 0.97f) / groupMm, (h * 0.995f) / chMm)
             if (mm > 0f) kk = min(kk, mm)
             k = kk
             val left = x + (w - (groupMm - LIP * 2) * k) / 2
@@ -308,6 +313,11 @@ class Painter(ctx: Context) {
 
     private val CW = PlayerGeom.CW
     private val CH = PlayerGeom.CH
+    // The pinch roller (24 Nov 2026): closing on the capstan (29.3, r 0.85) with the tape between,
+    // backing off a little on stop, and kept within the head strip
+    private val PINCH_R = 2.6f
+    private val PINCH_Y = 32.85f
+    private val PINCH_OFF = 0.8f
     private val HUB = Deck.HUB_R
     private val PACK = Deck.PACK_R
     private val RDX = 21.25f
@@ -600,41 +610,43 @@ class Painter(ctx: Context) {
             s.strokeWidth = rad * 0.28f; s.color = 0xFF2A2E33.toInt(); c.drawLine(x - rad * 0.6f, y, x + rad * 0.6f, y, s); c.drawLine(x, y - rad * 0.6f, x, y + rad * 0.6f, s)
         }
         val e = Deck.engage
-        val back = 1.7f * (1 - e)            // the head's travel, mm
-        // The flex: the head's ribbon cable, amber with its copper traces, curling away to the board
-        path.reset(); path.moveTo(-1.6f, 36f + back); path.lineTo(-1.6f, 38.2f); path.quadTo(-1.6f, 40f, -4f, 40f); path.lineTo(-16f, 40f)
-        path.lineTo(-16f, 37.8f); path.lineTo(-4.4f, 37.8f); path.quadTo(1.6f, 37.8f, 1.6f, 36f + back); path.close()
+        val back = 1.0f * (1 - e)            // the head's travel, mm
+        // 24 Nov 2026: the assembly packed close under the shell's foot (31.9), as a real deck's is, so the
+        // hole can be cut close and the tape can grow. Everything stays within 4.4 mm of the foot.
+        // The flex: the head's ribbon cable, amber with its copper traces, running away under the plate
+        path.reset(); path.moveTo(-1.6f, 33.6f + back); path.lineTo(-1.6f, 34.6f); path.quadTo(-1.6f, 35.6f, -3.2f, 35.6f); path.lineTo(-27.5f, 35.6f)
+        path.lineTo(-27.5f, 34.2f); path.lineTo(-3.4f, 34.2f); path.quadTo(1.6f, 34.2f, 1.6f, 33.6f + back); path.close()
         fill(0xFFB37A22.toInt()); p.setShadowLayer(0.6f, 0.2f, 0.4f, 0x80000000.toInt()); c.drawPath(path, p); p.clearShadowLayer()
         s.strokeWidth = 0.18f; s.color = 0xFFE2B15A.toInt()
-        for (o in floatArrayOf(-0.8f, 0f, 0.8f)) { c.drawLine(-4.5f, 38.9f + o * 0.9f, -15.5f, 38.9f + o * 0.9f, s) }
+        for (o in floatArrayOf(-0.8f, 0f, 0.8f)) { c.drawLine(-4.5f, 34.9f + o * 0.45f, -27f, 34.9f + o * 0.45f, s) }
         // The head plate, sliding in and out with the head
-        p.shader = LinearGradient(0f, 33.2f + back, 0f, 37.4f + back, intArrayOf(0xFF6A737D.toInt(), 0xFF454D57.toInt(), 0xFF2E343B.toInt()), null, Shader.TileMode.CLAMP)
+        p.shader = LinearGradient(0f, 32.4f + back, 0f, 35.0f + back, intArrayOf(0xFF6A737D.toInt(), 0xFF454D57.toInt(), 0xFF2E343B.toInt()), null, Shader.TileMode.CLAMP)
         p.setShadowLayer(0.9f, 0.3f, 0.6f, 0x99000000.toInt())
-        r.set(-24f, 33.2f + back, 24f, 37.4f + back); c.drawRoundRect(r, 1.2f, 1.2f, p); p.clearShadowLayer(); p.shader = null
-        s.strokeWidth = 0.2f; s.color = 0x33FFFFFF; c.drawLine(-23f, 33.45f + back, 23f, 33.45f + back, s)
+        r.set(-24f, 32.4f + back, 24f, 35.0f + back); c.drawRoundRect(r, 1.0f, 1.0f, p); p.clearShadowLayer(); p.shader = null
+        s.strokeWidth = 0.2f; s.color = 0x33FFFFFF; c.drawLine(-23f, 32.6f + back, 23f, 32.6f + back, s)
         // slots it slides on, and its screws
-        for (sx in floatArrayOf(-19f, 19f)) { fill(0xFF15181C.toInt()); r.set(sx - 2.2f, 35.6f + back - 0.45f, sx + 2.2f, 35.6f + back + 0.45f); c.drawRoundRect(r, 0.45f, 0.45f, p) }
-        screwMm(-19f, 35.6f, 0.75f); screwMm(19f, 35.6f, 0.75f)
+        for (sx in floatArrayOf(-19f, 19f)) { fill(0xFF15181C.toInt()); r.set(sx - 1.8f, 33.9f + back - 0.4f, sx + 1.8f, 33.9f + back + 0.4f); c.drawRoundRect(r, 0.4f, 0.4f, p) }
+        screwMm(-19f, 33.9f, 0.65f); screwMm(19f, 33.9f, 0.65f)
         // the head: chrome, its gap, on its azimuth screw with a coil under it
         p.shader = LinearGradient(-5f, 0f, 5f, 0f, intArrayOf(0xFF9AA1A8.toInt(), 0xFFF1F3F5.toInt(), 0xFF8D949B.toInt()), null, Shader.TileMode.CLAMP)
         p.setShadowLayer(0.5f, 0.2f, 0.4f, 0x99000000.toInt())
-        r.set(-5f, 30.85f + back, 5f, 35.2f + back); c.drawRoundRect(r, 1.4f, 1.4f, p); p.clearShadowLayer(); p.shader = null
+        r.set(-5f, 30.85f + back, 5f, 34.3f + back); c.drawRoundRect(r, 1.3f, 1.3f, p); p.clearShadowLayer(); p.shader = null
         fill(0xFF2B2F34.toInt()); c.drawRect(-0.15f, 30.85f + back, 0.15f, 32.2f + back, p)
-        s.strokeWidth = 0.25f; s.color = 0xFF9AA1A8.toInt(); c.drawCircle(7f, 35.3f + back, 1.1f, s); c.drawCircle(7f, 35.3f + back, 0.75f, s)
-        screwMm(7f, 35.3f + back, 0.6f)
+        s.strokeWidth = 0.25f; s.color = 0xFF9AA1A8.toInt(); c.drawCircle(7f, 33.9f + back, 1.0f, s); c.drawCircle(7f, 33.9f + back, 0.65f, s)
+        screwMm(7f, 33.9f + back, 0.55f)
         // the head's tape guides: forks either side that keep the tape at its height
         for (gx in floatArrayOf(-6.6f, 6.6f)) { fill(0xFF8D949B.toInt()); r.set(gx - 0.55f, 30.9f + back, gx + 0.55f, 33.6f + back); c.drawRect(r, p); fill(0xFFC9CED4.toInt()); r.set(gx - 0.9f, 30.75f + back, gx + 0.9f, 31.1f + back); c.drawRect(r, p) }
         // Pinch roller on its arm: the arm swings on a pivot screw, a spring pulling it in
-        val off = 1.4f * (1 - e)
-        val px = 13.6f + off * 0.5f; val py = 33.8f + off
-        val pvx = 22.5f; val pvy = 38.6f
+        val off = PINCH_OFF * (1 - e)
+        val px = 13.6f + off * 0.5f; val py = PINCH_Y + off
+        val pvx = 22.5f; val pvy = 34.6f
         s.strokeCap = Paint.Cap.ROUND
         s.strokeWidth = 2.6f; s.color = 0xFF2E343B.toInt(); c.drawLine(px, py, pvx, pvy, s)
         s.strokeWidth = 2.1f; s.shader = LinearGradient(px, py - 1f, px, py + 1f, 0xFF8E969F.toInt(), 0xFF555D66.toInt(), Shader.TileMode.CLAMP); c.drawLine(px, py, pvx, pvy, s); s.shader = null
         s.strokeCap = Paint.Cap.BUTT
         // the spring: from the arm to a post on the chassis
         val ax = px + (pvx - px) * 0.55f; val ay = py + (pvy - py) * 0.55f
-        val sx0 = 28.5f; val sy0 = 35.2f
+        val sx0 = 28.5f; val sy0 = 33.4f
         s.strokeWidth = 0.22f; s.color = 0xFFC9CED4.toInt()
         path.reset(); path.moveTo(ax, ay)
         for (i in 1..9) { val t = i / 10f; val nx = -(sy0 - ay); val ny = sx0 - ax; val nl = kotlin.math.hypot(nx, ny); val w = if (i % 2 == 0) 0.55f else -0.55f
@@ -643,9 +655,9 @@ class Painter(ctx: Context) {
         steel(sx0, sy0, 0.6f)
         screwMm(pvx, pvy, 1.0f)
         // the roller: black rubber on a brass hub
-        fill(0xFF121314.toInt()); p.setShadowLayer(0.7f, 0.25f, 0.5f, 0x99000000.toInt()); c.drawCircle(px, py, 2.9f, p); p.clearShadowLayer()
-        s.strokeWidth = 0.4f; s.color = 0x29FFFFFF; r.set(px - 2.2f, py - 2.2f, px + 2.2f, py + 2.2f); c.drawArc(r, 180f, 108f, false, s)
-        spokes(c, px, py, 2.1f, Deck.pinchAng, 3, 0x40FFFFFF)
+        fill(0xFF121314.toInt()); p.setShadowLayer(0.7f, 0.25f, 0.5f, 0x99000000.toInt()); c.drawCircle(px, py, PINCH_R, p); p.clearShadowLayer()
+        s.strokeWidth = 0.4f; s.color = 0x29FFFFFF; r.set(px - PINCH_R * 0.76f, py - PINCH_R * 0.76f, px + PINCH_R * 0.76f, py + PINCH_R * 0.76f); c.drawArc(r, 180f, 108f, false, s)
+        spokes(c, px, py, PINCH_R * 0.72f, Deck.pinchAng, 3, 0x40FFFFFF)
         fill(0xFFB08A4E.toInt()); c.drawCircle(px, py, 0.8f, p)
         // The deck's tape guides, posts at either end of the head plate
         steel(-28.5f, 32.8f + back * 0.4f, 1.0f); steel(28.5f, 32.8f + back * 0.4f, 1.0f)
@@ -683,10 +695,10 @@ class Painter(ctx: Context) {
             c.save(); c.clipRect(r)
             fill(0xFF3A281E.toInt()); c.drawRect(r.left, 30.4f, r.right, 30.85f, p)
             if (side > 0) {
-                val off = 1.4f * (1 - e)
-                val px = 13.6f + off * 0.5f; val py = 33.8f + off
-                fill(0xFF121314.toInt()); c.drawCircle(px, py, 2.9f, p)
-                spokes(c, px, py, 2.1f, Deck.pinchAng, 3, 0x40FFFFFF)
+                val off = PINCH_OFF * (1 - e)
+                val px = 13.6f + off * 0.5f; val py = PINCH_Y + off
+                fill(0xFF121314.toInt()); c.drawCircle(px, py, PINCH_R, p)
+                spokes(c, px, py, PINCH_R * 0.72f, Deck.pinchAng, 3, 0x40FFFFFF)
             }
             c.restore()
         }
@@ -1246,7 +1258,7 @@ class Painter(ctx: Context) {
         val C = G.comp ?: return
         // in the tape's millimetres, now the hole is cut to the tape (14 Nov 2026)
         val cr = 3.2f * G.k
-        val lip = 2.6f * G.k
+        val lip = PlayerGeom.LIP * G.k
         // 1 the lip: a raised frame of the lid's metal, chamfered down into the hole
         val O = RectF(C.left - lip, C.top - lip, C.right + lip, C.bottom + lip)
         raisedPlate(c, O, cr + lip, F, !G.wide)
@@ -1313,7 +1325,7 @@ class Painter(ctx: Context) {
      * positive) and the cell lying between them, drawn to the tape's scale.
      */
     private fun cellBay(c: Canvas, G: PlayerGeom, B: RectF, F: Finish, pop: Float = 0f) {
-        val lip = 2.6f * G.k
+        val lip = PlayerGeom.LIP * G.k
         val cr = 3f * G.k
         val O = RectF(B.left - lip, B.top - lip, B.right + lip, B.bottom + lip)
         raisedPlate(c, O, cr + lip, F, !G.wide)

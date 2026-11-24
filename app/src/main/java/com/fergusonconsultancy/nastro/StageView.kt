@@ -137,6 +137,13 @@ class StageView(ctx: Context) : View(ctx) {
         // near-square inner screen could put on the wrong side of a ratio
         val nowOpen = onMainScreen(w, h)
         display?.let { Light.rotation = it.rotation }
+        // folded and turned on its side, the face turns with the phone rather than re-laying itself out
+        val rot = display?.rotation ?: android.view.Surface.ROTATION_0
+        setTurn(if (!nowOpen && w > h) when (rot) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        } else 0)
         // The crease runs down the inner screen's upright centre; turned on its side it runs
         // across. Then the open Walkman is laid out across it, everything still upright (11 Nov 2026:
         // turning the whole frame sideways left the type and the tape on their sides)
@@ -157,6 +164,16 @@ class StageView(ctx: Context) : View(ctx) {
         layoutAll()
     }
 
+    // Turning straight from one side to the other (90 to 270) keeps the window's size, so no
+    // onSizeChanged: catch it here
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        if (!open && width > height) {
+            val t = when (display?.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_270 -> 270; else -> 0 }
+            if (t != turn) { setTurn(t); layoutAll(); invalidate() }
+        }
+    }
+
     /** True when this window is on the inner (main) screen and has most of it, not a split share. */
     private fun onMainScreen(w: Int, h: Int): Boolean {
         val m = android.util.DisplayMetrics()
@@ -171,12 +188,35 @@ class StageView(ctx: Context) : View(ctx) {
     // Open and on its side, the crease runs across the screen: the deck takes the top half and the
     // inside of the door, with the shelf, the bottom half.
     private var stacked = false
-    private val fw get() = width
-    private val fh get() = height
-    private val pl get() = paddingLeft
-    private val pt get() = paddingTop
-    private val pr get() = paddingRight
-    private val pb get() = paddingBottom
+
+    // ---- the cover screen on its side (24 Nov 2026) ----------------------------------------------
+    // Mechack, from the iPhone Duo's Duoman: a Walkman doesn't rearrange itself when you turn it. Folded
+    // and on its side, the face stays as it is on the hardware, readout at the camera end, keys at the
+    // other, and simply turns with the phone. Everything is laid out and drawn in an upright frame and
+    // turned onto the screen; touches are turned back into it. 90: the phone turned anticlockwise
+    // (the top of the face to the screen's left); 270: clockwise.
+    private var turn = 0
+    private val turnM = android.graphics.Matrix()
+    private val turnInv = android.graphics.Matrix()
+    private val fw get() = if (turn != 0) height else width
+    private val fh get() = if (turn != 0) width else height
+    private val pl get() = when (turn) { 90 -> paddingBottom; 270 -> paddingTop; else -> paddingLeft }
+    private val pt get() = when (turn) { 90 -> paddingLeft; 270 -> paddingRight; else -> paddingTop }
+    private val pr get() = when (turn) { 90 -> paddingTop; 270 -> paddingBottom; else -> paddingRight }
+    private val pb get() = when (turn) { 90 -> paddingRight; 270 -> paddingLeft; else -> paddingBottom }
+
+    private fun setTurn(t: Int) {
+        turn = t
+        turnM.reset()
+        // upright (x, y) to the screen: 90 → (y, H − x); 270 → (W − y, x)
+        when (t) {
+            90 -> { turnM.setRotate(-90f); turnM.postTranslate(0f, height.toFloat()) }
+            270 -> { turnM.setRotate(90f); turnM.postTranslate(width.toFloat(), 0f) }
+        }
+        turnM.invert(turnInv)
+        // the light is fixed to the face, which is fixed to the hardware
+        if (t != 0) Light.rotation = android.view.Surface.ROTATION_0
+    }
 
     /** The screen's own pixels per millimetre: the tape is drawn no bigger than a real one. */
     private val pxPerMm get() = resources.displayMetrics.xdpi / 25.4f
@@ -189,12 +229,14 @@ class StageView(ctx: Context) : View(ctx) {
      * folded and open.
      */
     private fun matched(here: String?, other: String, geom: (Float) -> PlayerGeom): Float {
-        // 14 Nov 2026: in pixels. The Fold 8 Ultra's two screens share one density (422 ppi), so equal
-        // pixels are equal millimetres; the main screen's reported dpi can't be trusted to agree
-        val free = geom(pxPerMm * 20f).k
-        if (here != null) Prefs.setFit(here, free)
-        val o = Prefs.fit(other)
-        return if (o > 0f) min(free, o) else free
+        // 24 Nov 2026: no longer matched in pixels. That took the two screens to share one density, but
+        // the open phone's 1880 px span a screen about 136 mm wide (roughly 350 ppi) against the cover's
+        // roughly 420, so equal pixels made the open tape the smaller one, and held the cover's back to it.
+        // The size the two share is the real one: each screen draws the tape as near its real size as it
+        // has room for. Open and upright, the half screen is barely wider than a cassette, so the room
+        // runs out at about its real size; it needs no cap there, which also keeps the open screen's
+        // reported dpi (not trusted) out of it. Folded, the cover's own dpi holds it to life size.
+        return if (here == "main") 0f else pxPerMm
     }
 
     private fun layoutAll() {
@@ -209,7 +251,7 @@ class StageView(ctx: Context) : View(ctx) {
             val half = Hf / 2f
             val g = dp(10f)
             val bleed = RectF(0f, 0f, Wf, half)
-            val m = matched(null, "cover") { PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, it) }
+            val m = matched("main", "cover") { PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, it) }
             deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
             face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
             shelfBg.set(0f, half, Wf, Hf)
@@ -218,9 +260,10 @@ class StageView(ctx: Context) : View(ctx) {
             val half = Wf / 2f
             val g = dp(10f)
             val bleed = RectF(half, 0f, Wf, Hf)
-            val bw = Wf - pr - half - g * 2
-            val m = matched("main", "cover") { PlayerGeom.bay(half + g, T + g, bw, H - g * 2, bleed, it) }
-            deck = PlayerGeom.bay(half + g, T + g, bw, H - g * 2, bleed, m)
+            // the hole runs across the body's whole width: under the hinge one side, the bezel the other
+            val bw = Wf - pr - half
+            val m = matched("main", "cover") { PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, it) }
+            deck = PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, m)
             face = PlayerGeom.face(half + g, T + g, bw, H - g * 2, bleed, m)
             deck?.let { Prefs.setAnchor(it.tx - half, it.ty) }
             shelfBg.set(0f, 0f, half, Hf)
@@ -321,7 +364,10 @@ class StageView(ctx: Context) : View(ctx) {
     }
 
     // ---- drawing -------------------------------------------------------------------------------
-    override fun onDraw(c: Canvas) = scene(c)
+    override fun onDraw(c: Canvas) {
+        if (turn == 0) { scene(c); return }
+        c.save(); c.concat(turnM); scene(c); c.restore()
+    }
 
     private fun scene(c: Canvas) {
         val now = SystemClock.uptimeMillis()
@@ -509,7 +555,12 @@ class StageView(ctx: Context) : View(ctx) {
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(e: MotionEvent): Boolean = touch(e)
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (turn == 0) return touch(e)
+        val t = MotionEvent.obtain(e)
+        t.transform(turnInv)
+        return try { touch(t) } finally { t.recycle() }
+    }
 
     // ---- carrying a tape (14 Nov 2026) --------------------------------------------------------------
     // Mechack: dragging a tape from the shelf and dropping it in the player is more analogue. Open,
