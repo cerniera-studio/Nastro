@@ -3,6 +3,7 @@ package com.fergusonconsultancy.nastro
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -20,6 +21,13 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /** Colour with alpha a (0..1) applied over its own. */
+/** [a] to [b] by [t], channel by channel, alpha included. */
+fun blend(a: Int, b: Int, t: Float): Int {
+    val q = t.coerceIn(0f, 1f)
+    fun ch(sh: Int) = ((((a ushr sh) and 0xFF) * (1 - q) + ((b ushr sh) and 0xFF) * q).toInt() and 0xFF) shl sh
+    return ch(24) or ch(16) or ch(8) or ch(0)
+}
+
 fun Int.a(a: Float): Int {
     val base = (this ushr 24) / 255f
     return (((base * a).coerceIn(0f, 1f) * 255).toInt() shl 24) or (this and 0xFFFFFF)
@@ -43,6 +51,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     lateinit var lcd: RectF
     lateinit var chan: RectF
     lateinit var keys: List<KeyR>
+    /** The same keys in the reverse order along their channel: where they go when the row reads the other way. */
+    var keysRev: List<KeyR> = emptyList()
     /** The touch area over the tape: the lens, or the compartment. */
     lateinit var win: RectF
     var k = 1f; var tx = 0f; var ty = 0f
@@ -55,6 +65,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     var comp: RectF? = null
     /** The open body's battery bay. */
     var cell: RectF? = null
+    /** Upright and open: mm of drive showing beyond each end of the tape (the motor, the gears). */
+    var ends = 0f
     var radius = 0f
     /** The player's body: the whole screen (or half) when it runs full-bleed, else its own shape. */
     var body = RectF()
@@ -83,14 +95,14 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
          * [bleed], when given, is the body: the whole screen, its corners the phone's own.
          * Wider than tall (the cover screen on its side), the face is laid out sideways.
          */
-        fun face(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null): PlayerGeom =
-            if (w > h * 1.05f) faceWide(x, y, w, h, bleed) else faceTall(x, y, w, h, bleed)
+        fun face(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, anchor: Pair<Float, Float>? = null): PlayerGeom =
+            if (w > h * 1.05f) faceWide(x, y, w, h, bleed, mm) else faceTall(x, y, w, h, bleed, mm, anchor)
 
         /**
          * The cover screen on its side (11 Nov 2026): the lid with its lens takes the left, the
          * tape lying flat behind it; the readout, keys and switches stand in a column on the right.
          */
-        private fun faceWide(x: Float, y: Float, w: Float, h: Float, bleed: RectF?): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
+        private fun faceWide(x: Float, y: Float, w: Float, h: Float, bleed: RectF?, mm: Float): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
             this.y = y; this.h = h
             rot = 0f
             radius = if (bleed != null) 0f else h * 0.12f
@@ -112,7 +124,7 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val maxW = ld.height() * 2.3f
             if (ld.width() > maxW) { val cx = ld.centerX(); ld.left = cx - maxW / 2; ld.right = cx + maxW / 2 }
             lid = ld
-            k = minOf(ld.width() * 0.62f / 74f, ld.height() * 0.4f / 30f)
+            k = minOf(ld.width() * 0.8f / 74f, ld.height() * 0.62f / 30f).let { if (mm > 0f) min(it, mm) else it }
             val lcx = ld.centerX(); val lcy = ld.top + ld.height() * 0.45f
             val ln = RectF(lcx - 37 * k, lcy - 15 * k, lcx + 37 * k, lcy + 15 * k)
             lens = ln
@@ -120,6 +132,28 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             win = RectF(ln)
             val wr = bleed?.right ?: (x + w)
             wheel = RectF(wr - 0.03f * u, lcd.top, wr + 0.015f * u, lcd.top + 0.36f * u)
+        }
+
+        /**
+         * The tabletop deck (24 Nov 2026): the open phone on its side, stood half open on a table. The
+         * upper half stands up as the compartment; the lower half lies flat as the front panel, as on
+         * a hi-fi deck: the readout and the switches across the top, a full-width bank of keys below.
+         */
+        fun panel(x: Float, y: Float, w: Float, h: Float, bleed: RectF): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
+            this.y = y; this.h = h
+            rot = 0f; radius = 0f
+            body = RectF(bleed)
+            u = min(w * 0.5f, h * 1.2f)
+            val padX = w * 0.045f
+            val lh = h * 0.36f
+            lcd = RectF(x + padX, y + h * 0.05f, x + padX + min(w * 0.52f, lh * 3.6f), y + h * 0.05f + lh)
+            val sw = x + w - padX - (lcd.right + w * 0.06f)
+            val sh = min(lcd.height(), sw * 0.3f)
+            strip(RectF(lcd.right + w * 0.06f, lcd.centerY() - sh / 2, x + w - padX, lcd.centerY() + sh / 2))
+            chan = RectF(x + padX, lcd.bottom + h * 0.07f, x + w - padX, y + h * 0.97f)
+            keys = keyRow(chan)
+            keysRev = keyRow(chan, reversed = true)
+            win = RectF(); k = 1f
         }
 
         private fun PlayerGeom.strip(st: RectF) {
@@ -131,30 +165,42 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             battery = RectF(st.left + st.width() * 0.72f, st.top + st.height() * 0.06f, st.right, st.top + st.height() * 0.94f)
         }
 
-        private fun faceTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null): PlayerGeom {
+        private fun faceTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, anchor: Pair<Float, Float>? = null): PlayerGeom {
             // Too squat for the whole face at this width (a split window): narrow it, centred, so nothing falls off the foot
-            if (h < 1.8f * w) { val w2 = h / 1.8f; return faceTallFit(x + (w - w2) / 2, y, w2, h, bleed) }
-            return faceTallFit(x, y, w, h, bleed)
+            if (h < 1.7f * w) { val w2 = h / 1.7f; return faceTallFit(x + (w - w2) / 2, y, w2, h, bleed, mm) }
+            return faceTallFit(x, y, w, h, bleed, mm, anchor)
         }
 
-        private fun faceTallFit(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
-            val lidH = (h - 1.0f * w).coerceIn(0.8f * w, if (bleed != null) 2.2f * w else 1.5f * w)
-            this.h = 1.0f * w + lidH
+        private fun faceTallFit(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, anchor: Pair<Float, Float>? = null): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
+            // 14 Nov 2026: the controls give up a little height so the lid, and the tape behind its lens, can
+            // grow to the real thing's size: the hubs 42.5 mm apart, as in your hand
+            // 14 Nov 2026, Mechack: the readout up, the keys and switches down, the space between to the lid
+            val lidH = (h - 0.75f * w).coerceIn(0.8f * w, if (bleed != null) 2.3f * w else 1.5f * w)
+            this.h = 0.75f * w + lidH
             this.y = y + (h - this.h) / 2
             radius = if (bleed != null) 0f else w * 0.12f
             body = bleed?.let { RectF(it) } ?: RectF(x, this.y, x + w, this.y + this.h)
-            lcd = RectF(x + 0.07f * w, this.y + 0.07f * w, x + 0.93f * w, this.y + 0.32f * w)
-            val ld = RectF(x + 0.055f * w, lcd.bottom + 0.055f * w, x + 0.945f * w, lcd.bottom + 0.055f * w + lidH)
+            lcd = RectF(x + 0.07f * w, this.y + 0.015f * w, x + 0.93f * w, this.y + 0.225f * w)
+            val ld = RectF(x + 0.045f * w, lcd.bottom + 0.045f * w, x + 0.955f * w, lcd.bottom + 0.045f * w + lidH)
             lid = ld
-            k = (ld.height() * 0.6f) / 74f                    // the lens shows both hubs: 74 mm of shell
-            val lcx = ld.centerX(); val lcy = ld.top + ld.height() * 0.45f
+            k = min(ld.height() * 0.74f / 74f, ld.width() * 0.62f / 30f).let { if (mm > 0f) min(it, mm) else it }
+            var lcx = ld.centerX(); var lcy = ld.top + ld.height() * 0.455f
+            // 14 Nov 2026, Mechack: the tape behind the lens must line up with the tape in the open
+            // compartment. Folded, the door lies over the compartment, the hinge on the left, so the tape is
+            // on the same spot: as far from the hinge edge and from the top as it is unfolded. The lens
+            // follows it, kept on the lid and clear of the engraving.
+            if (anchor != null && bleed != null) {
+                lcx = (bleed.left + anchor.first - REEL_Y * k).coerceIn(ld.left + 15 * k + 0.04f * w, ld.right - 15 * k - 0.04f * w)
+                lcy = (bleed.top + anchor.second).coerceIn(ld.top + 37 * k + ld.height() * 0.075f, ld.bottom - 37 * k - ld.height() * 0.14f)
+            }
             val ln = RectF(lcx - 15 * k, lcy - 37 * k, lcx + 15 * k, lcy + 37 * k)
             lens = ln
             tx = lcx + REEL_Y * k; ty = lcy
             win = RectF(ln)
-            chan = RectF(x + 0.055f * w, ld.bottom + 0.06f * w, x + 0.945f * w, ld.bottom + 0.28f * w)
+            chan = RectF(x + 0.055f * w, ld.bottom + 0.05f * w, x + 0.945f * w, ld.bottom + 0.24f * w)
             keys = keyRow(chan)
-            val st = RectF(x + 0.07f * w, chan.bottom + 0.05f * w, x + 0.93f * w, chan.bottom + 0.25f * w)
+            keysRev = keyRow(chan, reversed = true)
+            val st = RectF(x + 0.07f * w, chan.bottom + 0.035f * w, x + 0.93f * w, chan.bottom + 0.205f * w)
             strip(st)
             // the volume wheel stands proud of the body's edge; full-bleed, it emerges from the screen's edge
             val wr = bleed?.right ?: (x + w)
@@ -174,22 +220,49 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             lcd = RectF(); chan = RectF(); keys = emptyList(); keyPlate = null; legends = emptyList(); hold = null; wheel = null; battery = null
         }
 
+        // 14 Nov 2026, Mechack: the tape looked too small, with dead space round it. A real Walkman's
+        // compartment is barely bigger than the cassette, so this one is too: the tape at its real size
+        // (the screen's own pixels per millimetre) where it fits, the hole closing round it with the
+        // head assembly along its open edge, the AA bay below, the pair centred in the body.
+        // 24 Nov 2026, Mechack: still too small, room to spare. Upright, the half screen's width is all
+        // that limits the tape, and the margins took a fifth of it. Now the head assembly tucks under the
+        // shell's foot as a real one does (only the head, roller and plate edge show beyond it), the
+        // clearance is a real deck's, and the hole runs edge to edge across the body: its lip only shows
+        // above and below, running on under the hinge and the bezel at the sides.
+        private const val CLEAR = 0.6f      // mm round the shell
+        private const val HEADS = 3.8f      // mm of head plate, pinch roller and capstan beyond the shell's foot
+        private const val CELL = 22f        // mm: the gumstick cell (16.7 wide) and its clearance
+        private const val GAP = 3f          // mm of body between the two holes
+        const val LIP = 1.8f                // mm: each hole's raised lip
+
         private fun bayTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF?, mm: Float): PlayerGeom = PlayerGeom(Kind.BAY, x, w).apply {
             this.y = y; this.h = h
             noFace()
             radius = if (bleed != null) 0f else w * 0.08f
             body = bleed?.let { RectF(it) } ?: RectF(x, y, x + w, y + h)
-            // the battery bay at the foot: one AA lying across (50.5 × 14.5 mm)
-            val c0 = RectF(x + 0.045f * w, y + 0.05f * w, x + 0.955f * w, y + h - 0.05f * w)
-            var kk = minOf((c0.width() - 0.067f * w) / 72.4f, (c0.height() * 0.78f - 0.067f * w) / 104f)
+            val cwMm = CH + HEADS + CLEAR * 2
+            val groupMm = CW + CLEAR * 2 + GAP + LIP * 4 + CELL
+            // the width is what limits the tape upright, so the hole uses the body's whole width, edge to edge
+            val bw = (bleed?.width() ?: w) * 0.995f
+            var kk = min(bw / cwMm, (h * 0.97f) / groupMm)
             if (mm > 0f) kk = min(kk, mm)
-            val bayH = 14.5f * kk + 0.12f * w
-            val c = RectF(c0.left, c0.top, c0.right, c0.bottom - bayH - 0.05f * w)
+            k = kk
+            // 14 Nov 2026, Mechack: use the space at either end. The tape can't grow (the width holds it),
+            // so the hole runs on past its ends and shows what a Walkman hides there: the motor and its
+            // belt at one end, the reel gears at the other
+            ends = ((h * 0.97f / k - groupMm) / 2f).coerceIn(0f, 26f)
+            val chMm = CW + CLEAR * 2 + ends * 2
+            // 14 Nov 2026, Mechack: the AA bay down at the foot; the compartment centred in the rest
+            val cx = bleed?.centerX() ?: (x + w / 2)
+            val cellTop = y + h - (CELL + LIP) * k
+            val room = cellTop - (GAP + LIP * 2) * k - y
+            val top = y + max(LIP * k, (room - chMm * k) / 2)
+            val c = RectF(cx - cwMm * k / 2, top, cx + cwMm * k / 2, top + chMm * k)
             comp = c
-            cell = RectF(c0.left, c.bottom + 0.05f * w, c0.right, c0.bottom)
-            k = minOf(kk, (c.width() - 0.067f * w) / 72.4f, (c.height() - 0.067f * w) / 104f)
+            val cl = RectF(c.left, cellTop, c.right, cellTop + CELL * k)
+            cell = cl; battery = RectF(cl)
             // the tape's open edge and the heads face the hinge (the crease), as in a real player
-            tx = c.centerX() + 4.3f * k; ty = c.centerY()
+            tx = c.left + (CLEAR + HEADS + CH / 2) * k; ty = c.centerY()
             win = RectF(c)
         }
 
@@ -204,16 +277,20 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             u = h
             radius = if (bleed != null) 0f else h * 0.08f
             body = bleed?.let { RectF(it) } ?: RectF(x, y, x + w, y + h)
-            val pad = h * 0.05f
-            val c0 = RectF(x + pad, y + pad, x + w - pad, y + h - pad)
-            var kk = minOf((c0.width() * 0.8f - 0.067f * h) / 104f, (c0.height() - 0.067f * h) / 72.4f)
+            // lying flat: the tape across, its foot and the heads down at the hinge, the AA bay standing beside it
+            val cwMm = CW + CLEAR * 2; val chMm = CH + HEADS + CLEAR * 2
+            val groupMm = cwMm + GAP + LIP * 4 + CELL
+            var kk = min((w * 0.97f) / groupMm, (h * 0.995f) / chMm)
             if (mm > 0f) kk = min(kk, mm)
-            val bayW = 14.5f * kk + 0.12f * h
-            val c = RectF(c0.left, c0.top, c0.right - bayW - pad, c0.bottom)
+            k = kk
+            val left = x + (w - (groupMm - LIP * 2) * k) / 2
+            val cy = y + h / 2
+            val c = RectF(left, cy - chMm * k / 2, left + cwMm * k, cy + chMm * k / 2)
             comp = c
-            cell = RectF(c.right + pad, c0.top, c0.right, c0.bottom)
-            k = minOf(kk, (c.width() - 0.067f * h) / 104f, (c.height() - 0.067f * h) / 72.4f)
-            tx = c.centerX(); ty = c.centerY() - 4.3f * k
+            val cx0 = c.right + (GAP + LIP * 2) * k
+            val cl = RectF(cx0, c.top, cx0 + CELL * k, c.bottom)
+            cell = cl; battery = RectF(cl)
+            tx = c.centerX(); ty = c.top + (CLEAR + CH / 2) * k
             win = RectF(c)
         }
 
@@ -229,9 +306,9 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
          * Four round keys, spaced to be found blind as the WM-EX610's were; play the largest,
          * with room round it for its ring of beads.
          */
-        fun keyRow(chan: RectF): List<KeyR> {
-            val scale = floatArrayOf(1f, 1.22f, 1f, 1f)
-            val order = listOf(Deck.Key.REW, Deck.Key.PLAY, Deck.Key.STOP, Deck.Key.FF)
+        fun keyRow(chan: RectF, reversed: Boolean = false): List<KeyR> {
+            val scale = floatArrayOf(1f, 1.22f, 1f, 1f).let { if (reversed) it.reversedArray() else it }
+            val order = listOf(Deck.Key.REW, Deck.Key.PLAY, Deck.Key.STOP, Deck.Key.FF).let { if (reversed) it.reversed() else it }
             val d = minOf(chan.height() * 0.8f, chan.width() / 5.7f)
             val gap = (chan.width() - scale.sum() * d) / 5
             var kx = chan.left + gap
@@ -268,6 +345,11 @@ class Painter(ctx: Context) {
 
     private val CW = PlayerGeom.CW
     private val CH = PlayerGeom.CH
+    // The pinch roller (24 Nov 2026): closing on the capstan (29.3, r 0.85) with the tape between,
+    // backing off a little on stop, and kept within the head strip
+    private val PINCH_R = 2.6f
+    private val PINCH_Y = 32.85f
+    private val PINCH_OFF = 0.8f
     private val HUB = Deck.HUB_R
     private val PACK = Deck.PACK_R
     private val RDX = 21.25f
@@ -340,8 +422,12 @@ class Painter(ctx: Context) {
         c.drawRect(-CW / 2, -CH / 2, CW / 2, CH / 2, p)
         fill(0xFF3A281E.toInt())
         path.reset()
-        path.moveTo(-RDX - rl * 0.2f, RY + rl); path.lineTo(-38f, 25.5f); path.lineTo(38f, 25.5f); path.lineTo(RDX + rr * 0.2f, RY + rr)
-        path.lineTo(RDX + rr * 0.2f, RY + rr - 0.5f); path.lineTo(37.5f, 25f); path.lineTo(-37.5f, 25f); path.lineTo(-RDX - rl * 0.2f, RY + rl - 0.5f); path.close()
+        // as on the real thing: each pack's tape runs to the guide roller in its corner, round it, and along the open edge
+        val gr = Deck.GUIDE_R
+        path.moveTo(-RDX - rl * 0.55f, RY + rl * 0.84f); path.lineTo(-38f - gr, 26.9f); path.lineTo(-36.5f, 30.85f); path.lineTo(36.5f, 30.85f)
+        path.lineTo(38f + gr, 26.9f); path.lineTo(RDX + rr * 0.55f, RY + rr * 0.84f)
+        path.lineTo(RDX + rr * 0.55f - 0.35f, RY + rr * 0.84f - 0.3f); path.lineTo(38f + gr - 0.45f, 26.9f); path.lineTo(36.3f, 30.4f); path.lineTo(-36.3f, 30.4f)
+        path.lineTo(-38f - gr + 0.45f, 26.9f); path.lineTo(-RDX - rl * 0.55f + 0.35f, RY + rl * 0.84f - 0.3f); path.close()
         c.drawPath(path, p)
         for ((px, rad) in listOf(-RDX to rl, RDX to rr)) {
             p.shader = RadialGradient(px - rad * 0.3f, RY - rad * 0.35f, rad * 1.25f,
@@ -369,7 +455,8 @@ class Painter(ctx: Context) {
         }
         // glazing: one soft highlight
         c.save(); c.clipPath(seeP)
-        p.shader = LinearGradient(-30f, -12f, 10f, 10f, intArrayOf(0x29FFFFFF, 0x0AFFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.35f, 1f), Shader.TileMode.CLAMP)
+        val (lx, ly) = if (turn == 90f) Light.y to -Light.x else Light.x to Light.y
+        p.shader = LinearGradient(-30f + 22f * lx, -12f + 12f * ly, 10f + 22f * lx, 10f + 12f * ly, intArrayOf(0x29FFFFFF, 0x0AFFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.35f, 1f), Shader.TileMode.CLAMP)
         c.drawRect(-CW / 2, -CH / 2, CW / 2, CH / 2, p); p.shader = null
         c.restore()
         if (sh.clear == 0f) {
@@ -416,10 +503,16 @@ class Painter(ctx: Context) {
             s.strokeWidth = 0.45f; s.color = 0xFF3B3D40.toInt()
             c.drawLine(sx - 1, sy - 1, sx + 1, sy + 1, s); c.drawLine(sx + 1, sy - 1, sx - 1, sy + 1, s)
         }
-        fill(0xFF0A0A0A.toInt()); c.drawCircle(-12f, 28.5f, 1.5f, p); c.drawCircle(12f, 28.5f, 1.5f, p)
+        fill(0xFF0A0A0A.toInt()); c.drawCircle(-13.6f, 29.3f, 1.15f, p); c.drawCircle(13.6f, 29.3f, 1.15f, p)
         if (live) transport(c, sh)
         s.strokeWidth = 0.5f; s.color = 0x24FFFFFF; c.drawPath(outline, s)
     }
+
+    /** A tape lifted off the shelf in the hand: its place shows its open case. */
+    var carried: Tape? = null
+
+    /** How the tape being drawn is turned on screen, so its glazing follows the light. */
+    private var turn = 0f
 
     private fun packR(f: Double) = kotlin.math.sqrt(HUB * HUB + f * (PACK * PACK - HUB * HUB)).toFloat()
 
@@ -533,34 +626,73 @@ class Painter(ctx: Context) {
      * move with the transport (Deck.engage): on play the head slides up into the cassette's head
      * opening and the pinch roller closes on the capstan; on stop and while winding both fall back.
      */
+    // 14 Nov 2026, Mechack: more of the mechanism, and its relationship to the tape: reels, guides,
+    // roller. Drawn now in the shell's own millimetres (its foot edge at +31.9), so every part meets
+    // the tape where a real one does: the head's face in the head opening, the capstan up through the
+    // shell's capstan hole behind the tape, the pinch roller coming in through its notch to press the
+    // tape against it, swung on a sprung arm; the head plate screwed down, its flex running away.
     fun mechanism(c: Canvas) {
         fun steel(x: Float, y: Float, rad: Float) {
             p.shader = RadialGradient(x - rad * 0.3f, y - rad * 0.3f, rad * 1.3f, 0xFFF2F4F6.toInt(), 0xFF7D848C.toInt(), Shader.TileMode.CLAMP)
             c.drawCircle(x, y, rad, p); p.shader = null
         }
+        fun screwMm(x: Float, y: Float, rad: Float) {
+            p.shader = RadialGradient(x - rad * 0.35f, y - rad * 0.4f, rad * 1.4f, intArrayOf(0xFFF1F3F5.toInt(), 0xFFA8AEB5.toInt(), 0xFF5D646C.toInt()), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+            c.drawCircle(x, y, rad, p); p.shader = null
+            s.strokeWidth = rad * 0.28f; s.color = 0xFF2A2E33.toInt(); c.drawLine(x - rad * 0.6f, y, x + rad * 0.6f, y, s); c.drawLine(x, y - rad * 0.6f, x, y + rad * 0.6f, s)
+        }
         val e = Deck.engage
-        val back = 1.7f * (1 - e)            // the head's travel, mm
-        // The head plate, carrying the head and the erase bar
-        fill(0xFF4A525C.toInt()); r.set(-25f, 32.6f + back, 25f, 36.8f + back); c.drawRoundRect(r, 1.4f, 1.4f, p)
+        val back = 1.0f * (1 - e)            // the head's travel, mm
+        // 24 Nov 2026: the assembly packed close under the shell's foot (31.9), as a real deck's is, so the
+        // hole can be cut close and the tape can grow. Everything stays within 4.4 mm of the foot.
+        // The flex: the head's ribbon cable, amber with its copper traces, running away under the plate
+        path.reset(); path.moveTo(-1.6f, 33.6f + back); path.lineTo(-1.6f, 34.6f); path.quadTo(-1.6f, 35.6f, -3.2f, 35.6f); path.lineTo(-27.5f, 35.6f)
+        path.lineTo(-27.5f, 34.2f); path.lineTo(-3.4f, 34.2f); path.quadTo(1.6f, 34.2f, 1.6f, 33.6f + back); path.close()
+        fill(0xFFB37A22.toInt()); p.setShadowLayer(0.6f, 0.2f, 0.4f, 0x80000000.toInt()); c.drawPath(path, p); p.clearShadowLayer()
+        s.strokeWidth = 0.18f; s.color = 0xFFE2B15A.toInt()
+        for (o in floatArrayOf(-0.8f, 0f, 0.8f)) { c.drawLine(-4.5f, 34.9f + o * 0.45f, -27f, 34.9f + o * 0.45f, s) }
+        // The head plate, sliding in and out with the head
+        p.shader = LinearGradient(0f, 32.4f + back, 0f, 35.0f + back, intArrayOf(0xFF6A737D.toInt(), 0xFF454D57.toInt(), 0xFF2E343B.toInt()), null, Shader.TileMode.CLAMP)
+        p.setShadowLayer(0.9f, 0.3f, 0.6f, 0x99000000.toInt())
+        r.set(-24f, 32.4f + back, 24f, 35.0f + back); c.drawRoundRect(r, 1.0f, 1.0f, p); p.clearShadowLayer(); p.shader = null
+        s.strokeWidth = 0.2f; s.color = 0x33FFFFFF; c.drawLine(-23f, 32.6f + back, 23f, 32.6f + back, s)
+        // slots it slides on, and its screws
+        for (sx in floatArrayOf(-19f, 19f)) { fill(0xFF15181C.toInt()); r.set(sx - 1.8f, 33.9f + back - 0.4f, sx + 1.8f, 33.9f + back + 0.4f); c.drawRoundRect(r, 0.4f, 0.4f, p) }
+        screwMm(-19f, 33.9f, 0.65f); screwMm(19f, 33.9f, 0.65f)
+        // the head: chrome, its gap, on its azimuth screw with a coil under it
         p.shader = LinearGradient(-5f, 0f, 5f, 0f, intArrayOf(0xFF9AA1A8.toInt(), 0xFFF1F3F5.toInt(), 0xFF8D949B.toInt()), null, Shader.TileMode.CLAMP)
-        r.set(-5f, 30.05f + back, 5f, 34.2f + back); c.drawRoundRect(r, 1.6f, 1.6f, p); p.shader = null
-        fill(0xFF2B2F34.toInt()); c.drawRect(-0.15f, 30.05f + back, 0.15f, 31.6f + back, p)
-        s.strokeWidth = 0.35f; s.color = 0xFF9AA1A8.toInt()
-        path.reset(); for (i in 0 until 7) { val yy = 35.4f + back + if (i % 2 == 1) 0.5f else -0.5f; if (i == 0) path.moveTo(-3f, yy) else path.lineTo(-3f + i, yy) }
-        c.drawPath(path, s)
-        // Capstan: a polished pin with a flat that shows it turning
-        steel(13.6f, 31.6f, 0.85f)
-        if (e > 0.6f) spokes(c, 13.6f, 31.6f, 0.7f, Deck.capstanAng, 1, 0x99505860.toInt())
-        // Pinch roller: closes on the capstan with the head, black rubber with a turning mark
-        val off = 1.3f * (1 - e)
-        // Engaged, it grips: its rim meets the capstan's (centres 3.75 mm apart)
-        val px = 17.0f + off; val py = 33.17f + off
-        fill(0xFF121314.toInt()); c.drawCircle(px, py, 2.9f, p)
-        s.strokeWidth = 0.4f; s.color = 0x29FFFFFF; r.set(px - 2.2f, py - 2.2f, px + 2.2f, py + 2.2f); c.drawArc(r, 180f, 108f, false, s)
-        spokes(c, px, py, 2.1f, Deck.pinchAng, 3, 0x40FFFFFF)
-        fill(0xFF5A6068.toInt()); c.drawCircle(px, py, 0.7f, p)
-        // The deck's own tape guides either side of the head
-        steel(-29f, 32.6f + back * 0.4f, 1.1f); steel(29f, 32.6f + back * 0.4f, 1.1f)
+        p.setShadowLayer(0.5f, 0.2f, 0.4f, 0x99000000.toInt())
+        r.set(-5f, 30.85f + back, 5f, 34.3f + back); c.drawRoundRect(r, 1.3f, 1.3f, p); p.clearShadowLayer(); p.shader = null
+        fill(0xFF2B2F34.toInt()); c.drawRect(-0.15f, 30.85f + back, 0.15f, 32.2f + back, p)
+        s.strokeWidth = 0.25f; s.color = 0xFF9AA1A8.toInt(); c.drawCircle(7f, 33.9f + back, 1.0f, s); c.drawCircle(7f, 33.9f + back, 0.65f, s)
+        screwMm(7f, 33.9f + back, 0.55f)
+        // the head's tape guides: forks either side that keep the tape at its height
+        for (gx in floatArrayOf(-6.6f, 6.6f)) { fill(0xFF8D949B.toInt()); r.set(gx - 0.55f, 30.9f + back, gx + 0.55f, 33.6f + back); c.drawRect(r, p); fill(0xFFC9CED4.toInt()); r.set(gx - 0.9f, 30.75f + back, gx + 0.9f, 31.1f + back); c.drawRect(r, p) }
+        // Pinch roller on its arm: the arm swings on a pivot screw, a spring pulling it in
+        val off = PINCH_OFF * (1 - e)
+        val px = 13.6f + off * 0.5f; val py = PINCH_Y + off
+        val pvx = 22.5f; val pvy = 34.6f
+        s.strokeCap = Paint.Cap.ROUND
+        s.strokeWidth = 2.6f; s.color = 0xFF2E343B.toInt(); c.drawLine(px, py, pvx, pvy, s)
+        s.strokeWidth = 2.1f; s.shader = LinearGradient(px, py - 1f, px, py + 1f, 0xFF8E969F.toInt(), 0xFF555D66.toInt(), Shader.TileMode.CLAMP); c.drawLine(px, py, pvx, pvy, s); s.shader = null
+        s.strokeCap = Paint.Cap.BUTT
+        // the spring: from the arm to a post on the chassis
+        val ax = px + (pvx - px) * 0.55f; val ay = py + (pvy - py) * 0.55f
+        val sx0 = 28.5f; val sy0 = 33.4f
+        s.strokeWidth = 0.22f; s.color = 0xFFC9CED4.toInt()
+        path.reset(); path.moveTo(ax, ay)
+        for (i in 1..9) { val t = i / 10f; val nx = -(sy0 - ay); val ny = sx0 - ax; val nl = kotlin.math.hypot(nx, ny); val w = if (i % 2 == 0) 0.55f else -0.55f
+            path.lineTo(ax + (sx0 - ax) * t + nx / nl * w, ay + (sy0 - ay) * t + ny / nl * w) }
+        path.lineTo(sx0, sy0); c.drawPath(path, s)
+        steel(sx0, sy0, 0.6f)
+        screwMm(pvx, pvy, 1.0f)
+        // the roller: black rubber on a brass hub
+        fill(0xFF121314.toInt()); p.setShadowLayer(0.7f, 0.25f, 0.5f, 0x99000000.toInt()); c.drawCircle(px, py, PINCH_R, p); p.clearShadowLayer()
+        s.strokeWidth = 0.4f; s.color = 0x29FFFFFF; r.set(px - PINCH_R * 0.76f, py - PINCH_R * 0.76f, px + PINCH_R * 0.76f, py + PINCH_R * 0.76f); c.drawArc(r, 180f, 108f, false, s)
+        spokes(c, px, py, PINCH_R * 0.72f, Deck.pinchAng, 3, 0x40FFFFFF)
+        fill(0xFFB08A4E.toInt()); c.drawCircle(px, py, 0.8f, p)
+        // The deck's tape guides, posts at either end of the head plate
+        steel(-28.5f, 32.8f + back * 0.4f, 1.0f); steel(28.5f, 32.8f + back * 0.4f, 1.0f)
     }
 
     /**
@@ -586,6 +718,26 @@ class Painter(ctx: Context) {
      */
     private fun transport(c: Canvas, sh: Shell) {
         val e = Deck.engage
+        // The pinch roller notches either side, the tape running across them; on the deck's side the
+        // capstan stands up behind the tape and the roller comes in to press it there
+        for (side in floatArrayOf(-1f, 1f)) {
+            val nx0 = side * 10.6f; val nx1 = side * 16.8f
+            r.set(min(nx0, nx1), 30.0f, max(nx0, nx1), CH / 2 + 0.2f)
+            fill(0xFF0A0A0B.toInt()); c.drawRoundRect(r, 0.5f, 0.5f, p)
+            c.save(); c.clipRect(r)
+            fill(0xFF3A281E.toInt()); c.drawRect(r.left, 30.4f, r.right, 30.85f, p)
+            if (side > 0) {
+                val off = PINCH_OFF * (1 - e)
+                val px = 13.6f + off * 0.5f; val py = PINCH_Y + off
+                fill(0xFF121314.toInt()); c.drawCircle(px, py, PINCH_R, p)
+                spokes(c, px, py, PINCH_R * 0.72f, Deck.pinchAng, 3, 0x40FFFFFF)
+            }
+            c.restore()
+        }
+        // the deck's capstan up through the shell's hole, turning when it drives
+        p.shader = RadialGradient(13.3f, 29.0f, 1.1f, 0xFFF2F4F6.toInt(), 0xFF7D848C.toInt(), Shader.TileMode.CLAMP)
+        c.drawCircle(13.6f, 29.3f, 0.85f, p); p.shader = null
+        if (e > 0.6f) spokes(c, 13.6f, 29.3f, 0.7f, Deck.capstanAng, 1, 0x99505860.toInt())
         // Tape guides
         for (gx in floatArrayOf(-38f, 38f)) {
             val gy = 26.9f
@@ -626,6 +778,26 @@ class Painter(ctx: Context) {
     class Live(
         var pressed: Deck.Key? = null, var pressAge: Long = 9999, var proximity: Map<String, Float> = emptyMap(),
         var lifting: Boolean = false, var volume: Float = 0.7f, var volAge: Long = 9999,
+        /** The open body's AA springing up for the settings: 0 seated, 1 up. */
+        var cellPop: Float = 0f,
+        /**
+         * The keys adapting to how the phone is held (24 Nov 2026): [glyph] turns each key's symbol, in
+         * degrees, so it reads upright whichever way the face is turned; [order], 0 to 1, slides the keys
+         * along their channel into the reverse order, so the column always reads rewind, play, stop,
+         * fast forward from the top.
+         */
+        var glyph: Float = 0f, var order: Float = 0f,
+        /**
+         * Keys that answer to what is going on (24 Nov 2026). [holdSink], 0 to 1: Hold sinks the keys
+         * flush and dims them. [invite], 0 to 1: a tape waits, stopped, and play glows faintly, breathing.
+         * [sideEnd], 0 to 1: the side's music is running out and auto reverse wakes.
+         */
+        var holdSink: Float = 0f, var invite: Float = 0f, var sideEnd: Float = 0f,
+        /**
+         * The room's light (24 Nov 2026): [dark], 0 to 1, backlights the keys' symbols like a car's
+         * dashboard at night; [bright], 0 to 1, deepens their engraving in sunlight.
+         */
+        var dark: Float = 0f, var bright: Float = 0f,
     )
 
     /**
@@ -678,8 +850,9 @@ class Painter(ctx: Context) {
             // clear-coated lacquer: deep colour darkening towards the edges, and one broad reflection
             p.shader = RadialGradient(R.left + R.width() * 0.35f, R.top + R.height() * 0.3f, max(R.width(), R.height()) * 0.85f, stops, floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
             c.drawRoundRect(R, rad, rad, p)
+            val d = Light.x * 0.16f + Light.y * 0.08f
             p.shader = LinearGradient(R.left, R.top, R.right, R.top + R.height() * 0.6f,
-                intArrayOf(0, 0, 0x33E1FFEC, 0x42F0FFF4, 0, 0), floatArrayOf(0f, 0.24f, 0.33f, 0.35f, 0.45f, 1f), Shader.TileMode.CLAMP)
+                intArrayOf(0, 0, 0x33E1FFEC, 0x42F0FFF4, 0, 0), floatArrayOf(0f, 0.24f + d, 0.33f + d, 0.35f + d, 0.45f + d, 1f), Shader.TileMode.CLAMP)
             c.drawRoundRect(R, rad, rad, p); p.shader = null
             return
         }
@@ -693,8 +866,11 @@ class Painter(ctx: Context) {
         p.alpha = 255
         if (aniso) {
             // brushed metal stretches its highlight into a soft streak across the grooves
-            val streak = intArrayOf(0x00E6FFF0, 0x00E6FFF0, 0x33E6FFF0, 0x00E6FFF0, 0x00E6FFF0)
-            val stops = floatArrayOf(0f, 0.2f, 0.3f, 0.4f, 1f)
+            // it slides across the grooves as the phone tilts (14 Nov 2026)
+            val d = (if (vertical) Light.y else Light.x) * 0.18f
+            val glint = (0x33 + (kotlin.math.abs(d) * 90).toInt()).coerceAtMost(0x45) shl 24
+            val streak = intArrayOf(0x00E6FFF0, 0x00E6FFF0, glint or 0xE6FFF0, 0x00E6FFF0, 0x00E6FFF0)
+            val stops = floatArrayOf(0f, 0.2f + d, 0.3f + d, 0.4f + d, 1f)
             p.shader = if (vertical) LinearGradient(0f, R.top, 0f, R.bottom, streak, stops, Shader.TileMode.CLAMP)
             else LinearGradient(R.left, 0f, R.right, 0f, streak, stops, Shader.TileMode.CLAMP)
             c.drawRect(R, p); p.shader = null
@@ -744,6 +920,9 @@ class Painter(ctx: Context) {
     private val LCD_TOP = 0xFFA29B84.toInt()
     private val LCD_BOT = 0xFF8A8370.toInt()
     private val LCD_ON = 0xFF1F1C15.toInt()
+    /** The keys' backlight after dark: warm, as a car's dashboard is at night. */
+    private val GLOW = 0xFFFFB347.toInt()
+    private val GLOW_CORE = 0xFFFFF3DC.toInt()
     private val LCD_SHADOW = 0x4228241A
 
     private fun lcd(c: Canvas, L: RectF, detail: Float, live: Live) {
@@ -767,6 +946,27 @@ class Painter(ctx: Context) {
         p.shader = LinearGradient(G.left, 0f, G.left + G.width() * 0.06f, 0f, Color.BLACK.a(0.22f), 0, Shader.TileMode.CLAMP); c.drawRect(G, p)
         p.shader = null
 
+        // On its side (24 Nov 2026) the readout turns upright with the keys: as the symbols swivel, the
+        // usual rows fade out and a stacked readout fades in across the strip, read the right way up.
+        val tq = (kotlin.math.abs(live.glyph) / 90f).coerceIn(0f, 1f)
+        if (tq < 0.999f) {
+            if (tq > 0.001f) c.saveLayerAlpha(G, ((1 - tq) * 255).toInt())
+            lcdRows(c, G, detail, live)
+            if (tq > 0.001f) c.restore()
+        }
+        if (tq > 0.001f) {
+            c.saveLayerAlpha(G, (tq * 255).toInt())
+            lcdSide(c, G, detail, live)
+            c.restore()
+        }
+        // one highlight across the glass
+        p.shader = LinearGradient(G.left, G.top, G.left + G.width() * 0.5f, G.bottom, intArrayOf(Color.WHITE.a(0.2f), Color.WHITE.a(0.04f), 0), floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(G, p); p.shader = null
+        c.restore()
+    }
+
+    /** The readout's usual rows: icons, then what the deck is doing and the counter, then the title. */
+    private fun lcdRows(c: Canvas, G: RectF, detail: Float, live: Live) {
         // icons along the top: the tape, auto reverse, Mega Bass, battery
         val ih = G.height() * 0.13f; val iy = G.top + G.height() * 0.1f
         val ix = G.left + G.width() * 0.06f; val rx = G.left + G.width() * 0.94f
@@ -810,10 +1010,83 @@ class Painter(ctx: Context) {
             run.substring(step, (step + room).coerceAtMost(run.length))
         } else txt
         seg14text(c, shown, G.left + G.width() * 0.06f, G.top + G.height() * 0.74f, tw, th, room, 0.25f + 0.75f * detail)
-        // one highlight across the glass
-        p.shader = LinearGradient(G.left, G.top, G.left + G.width() * 0.5f, G.bottom, intArrayOf(Color.WHITE.a(0.2f), Color.WHITE.a(0.04f), 0), floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
-        c.drawRect(G, p); p.shader = null
+    }
+
+    private fun modeWord(live: Live): String {
+        val m = Deck.mode
+        return when {
+            Deck.door > 0.5f -> "OPEN"
+            Deck.hold && live.pressed != null && live.pressAge < 900 -> "HOLD"
+            m == Deck.Mode.PLAY -> "PLAY"; m == Deck.Mode.FF -> "FF"; m == Deck.Mode.REW -> "REW"; m == Deck.Mode.AMS -> "AMS"
+            else -> "STOP"
+        }
+    }
+
+    /**
+     * The readout on its side (24 Nov 2026, second version). Mechack found the first, the whole readout
+     * stood upright with the title broken into five-letter lines, clumsy. Now only what is read at a
+     * glance turns upright, in a block at the strip's top end: a pictogram of what the deck is doing
+     * and the counter, large. The title runs along the strip's length in one line, as the NASTRO
+     * wordmark and the printed legends do, read like a spine. A fine rule divides the two.
+     */
+    private fun lcdSide(c: Canvas, G: RectF, detail: Float, live: Live) {
+        val gh = G.height()
+        val blen = gh * 1.3f
+        // the screen's top end of the strip: the face's right end when turned anticlockwise, left when clockwise
+        val atRight = live.glyph > 0
+        val B = if (atRight) RectF(G.right - blen, G.top, G.right, G.bottom) else RectF(G.left, G.top, G.left + blen, G.bottom)
+        val S = if (atRight) RectF(G.left, G.top, B.left - gh * 0.12f, G.bottom) else RectF(B.right + gh * 0.12f, G.top, G.right, G.bottom)
+        // the rule between them
+        val rx = if (atRight) B.left - gh * 0.06f else B.right + gh * 0.06f
+        lcdInk(c, 0.55f) { col -> s.color = col; s.strokeWidth = max(dp(0.8f), gh * 0.012f); c.drawLine(rx, G.top + gh * 0.16f, rx, G.bottom - gh * 0.16f, s) }
+
+        // the block, upright on screen
+        c.save()
+        c.rotate(if (atRight) 90f else -90f, B.centerX(), B.centerY())
+        val w = gh; val Q = RectF(B.centerX() - w / 2, B.centerY() - blen / 2, B.centerX() + w / 2, B.centerY() + blen / 2)
+        val ps = w * 0.4f
+        pictogram(c, modeWord(live), Q.centerX() - w * 0.06f, Q.top + Q.height() * 0.1f + ps / 2, ps)
+        // the tape's direction, small, beside it
+        seg14text(c, if (Deck.dir > 0) "F" else "R", Q.right - w * 0.24f, Q.top + Q.height() * 0.1f + ps * 0.18f, w * 0.1f, w * 0.17f, 1, 0.8f)
+        val cw = w * 0.78f / (3 * 1.32f) + w * 0.01f; val ch = cw / 0.62f
+        seg14text(c, Deck.counter().toString().padStart(3, '0'), Q.centerX() - (cw * 1.32f * 3 - cw * 0.32f) / 2, Q.bottom - Q.height() * 0.1f - ch, cw, ch, 3, 1f)
         c.restore()
+
+        // the title along the strip, one line, stepping like the readout's own marquee
+        val cur = Deck.current()
+        val txt = if (live.volAge < 1300) "VOL " + "-".repeat((live.volume * 10).toInt().coerceIn(0, 10))
+            else ((cur.track?.number ?: 0).toString().padStart(2, '0') + " " + (cur.track?.title ?: "")).uppercase()
+        val th = gh * 0.4f; val tw = th * 0.6f
+        val room = ((S.width() * 0.92f) / (tw * 1.32f)).toInt().coerceAtLeast(1)
+        val shown = if (txt.length > room) {
+            val run = "$txt    $txt    "
+            val step = ((android.os.SystemClock.uptimeMillis() / 260) % (txt.length + 4)).toInt()
+            run.substring(step, (step + room).coerceAtMost(run.length))
+        } else txt
+        seg14text(c, shown, S.left + S.width() * 0.04f, S.centerY() - th / 2, tw, th, room, 0.25f + 0.75f * detail)
+    }
+
+    /** LCD pictograms for what the deck is doing, centred on [x], [y], [size] tall. */
+    private fun pictogram(c: Canvas, mode: String, x: Float, y: Float, size: Float) {
+        val h = size / 2
+        lcdInk(c, 1f) { col ->
+            fill(col); path.reset()
+            fun tri(l: Float, r0: Float, right: Boolean) {
+                if (right) { path.moveTo(l, y - h); path.lineTo(r0, y); path.lineTo(l, y + h) } else { path.moveTo(r0, y - h); path.lineTo(l, y); path.lineTo(r0, y + h) }
+                path.close()
+            }
+            when (mode) {
+                "PLAY" -> tri(x - h * 0.75f, x + h * 0.95f, true)
+                "FF", "AMS" -> { tri(x - h * 1.1f, x, true); tri(x, x + h * 1.1f, true) }
+                "REW" -> { tri(x - h * 1.1f, x, false); tri(x, x + h * 1.1f, false) }
+                "OPEN" -> { path.moveTo(x - h, y + h * 0.1f); path.lineTo(x, y - h); path.lineTo(x + h, y + h * 0.1f); path.close()
+                    path.addRect(x - h, y + h * 0.45f, x + h, y + h, Path.Direction.CW) }
+                "HOLD" -> { path.addRect(x - h * 0.75f, y - h * 0.05f, x + h * 0.75f, y + h, Path.Direction.CW)
+                    s.color = col; s.strokeWidth = h * 0.22f; r.set(x - h * 0.48f, y - h * 0.95f, x + h * 0.48f, y + h * 0.2f); c.drawArc(r, 180f, 180f, false, s) }
+                else -> path.addRect(x - h * 0.8f, y - h * 0.8f, x + h * 0.8f, y + h * 0.8f, Path.Direction.CW)
+            }
+            c.drawPath(path, p)
+        }
     }
 
     /** LCD ink: draw twice, first as the segments' shadow on the reflector, then the segments. */
@@ -886,9 +1159,15 @@ class Painter(ctx: Context) {
             Deck.Key.REW -> m == Deck.Mode.REW || (m == Deck.Mode.AMS && Deck.v * Deck.dir < 0)
             Deck.Key.STOP -> false
         }
-        for (K in G.keys) {
-            val d = max(if (latched(K.key)) 0.55f else 0f, if (live.pressed == K.key) max(0f, 1 - live.pressAge / 170f) else 0f)
-            val cx = K.cx; val cy = K.cy; val R = K.r
+        for (K0 in G.keys) {
+            // where this key sits in the forward row and in the reversed one; it glides between them
+            val Ka = G.keys.first { it.key == K0.key }
+            val Kb = G.keysRev.firstOrNull { it.key == K0.key } ?: Ka
+            val o = live.order
+            val K = K0
+            val d = max(max(if (latched(K.key)) 0.55f else 0f, if (live.pressed == K.key) max(0f, 1 - live.pressAge / 170f) else 0f), live.holdSink * 0.9f)
+            val cx = Ka.cx + (Kb.cx - Ka.cx) * o; val cy = Ka.cy + (Kb.cy - Ka.cy) * o
+            val R = Ka.r + (Kb.r - Ka.r) * o
             // Sunk into the body, as on the WM-EX610: a deep round hole whose upper lip is in shadow
             // and whose lower lip catches the light; the wall falls away dark above and lit below.
             val wellR = if (K.key == Deck.Key.PLAY) R * 1.36f else R * 1.16f
@@ -929,6 +1208,11 @@ class Painter(ctx: Context) {
             s.strokeCap = Paint.Cap.BUTT
             // the edge where the dome turns away
             s.strokeWidth = dp(0.6f); s.color = Color.BLACK.a(0.28f); c.drawCircle(0f, 0f, R - dp(0.3f), s)
+            // Hold: the caps sink flush and go dim, a lock you can see
+            // After dark (24 Nov 2026, second version) the room's light has gone from the caps too: they dim,
+            // so the backlit symbols read as light on a dark key rather than amber on cream
+            val dim = max(0.34f * live.holdSink, 0.62f * live.dark)
+            if (dim > 0.01f) { fill(Color.BLACK.a(dim)); c.drawCircle(0f, 0f, R, p) }
             // engraved symbol
             val q = fr * 0.34f
             path.reset()
@@ -938,8 +1222,29 @@ class Painter(ctx: Context) {
                 Deck.Key.FF -> { path.moveTo(-q, -q * 0.75f); path.lineTo(0f, 0f); path.lineTo(-q, q * 0.75f); path.close(); path.moveTo(0f, -q * 0.75f); path.lineTo(q, 0f); path.lineTo(0f, q * 0.75f); path.close() }
                 Deck.Key.REW -> { path.moveTo(q, -q * 0.75f); path.lineTo(0f, 0f); path.lineTo(q, q * 0.75f); path.close(); path.moveTo(0f, -q * 0.75f); path.lineTo(-q, 0f); path.lineTo(0f, q * 0.75f); path.close() }
             }
-            c.save(); c.translate(0f, dp(0.5f)); fill(Color.WHITE.a(0.5f)); c.drawPath(path, p); c.restore()
-            fill(F.sym); c.drawPath(path, p)
+            // the symbol turns to read upright however the phone is held
+            c.save(); c.rotate(live.glyph)
+            // in sunlight the engraving reads deeper: its lit edge brighter, the cut darker
+            val br = live.bright
+            c.save(); c.translate(0f, dp(0.5f) * (1 + br * 0.6f)); fill(Color.WHITE.a(0.5f + 0.3f * br)); c.drawPath(path, p); c.restore()
+            val symCol = blend(F.sym, F.sym or 0xFF000000.toInt(), br)
+            // after dark the symbol is lit from behind, a dashboard's warm glow; a waiting tape's play
+            // key glows faintly, breathing, as if it were ready
+            val glow = live.dark * (1 - live.holdSink * 0.7f)
+            if (glow > 0.01f) {
+                // lit from behind: a warm-white core in an amber halo
+                p.setShadowLayer(R * 0.3f, 0f, 0f, GLOW.a(0.95f * glow))
+                fill(blend(symCol, GLOW_CORE, glow)); c.drawPath(path, p)
+                p.setShadowLayer(R * 0.08f, 0f, 0f, GLOW_CORE.a(0.7f * glow)); c.drawPath(path, p); p.clearShadowLayer()
+            } else { fill(symCol); c.drawPath(path, p) }
+            c.restore()
+            // a waiting tape: play's cap is ringed with a faint breathing light, the symbol left clear
+            if (K.key == Deck.Key.PLAY && live.invite > 0.01f) {
+                val breath = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 2400.0 * 2 * PI).toFloat()
+                val a = live.invite * (0.3f + 0.7f * breath)
+                s.strokeWidth = R * 0.07f; s.color = GLOW.a(0.75f * a)
+                s.setShadowLayer(R * 0.18f, 0f, 0f, GLOW.a(a)); c.drawCircle(0f, 0f, R * 1.02f, s); s.clearShadowLayer()
+            }
             c.restore()
         }
     }
@@ -987,7 +1292,7 @@ class Painter(ctx: Context) {
         if (!F.lacquer && !F.aniso) {
             // one highlight over the shoulder (lacquer and anisotropic brushing carry their own)
             c.save(); path.reset(); path.addRoundRect(body, R, R, Path.Direction.CW); c.clipPath(path)
-            p.shader = RadialGradient(body.left + w * 0.18f, body.top + G.h * 0.02f, w * 1.1f, Color.WHITE.a(0.32f), 0, Shader.TileMode.CLAMP)
+            p.shader = RadialGradient(body.left + w * (0.18f + 0.3f * Light.x), body.top + G.h * (0.02f + 0.12f * Light.y), w * 1.1f, Color.WHITE.a(0.32f), 0, Shader.TileMode.CLAMP)
             c.drawRect(body, p); p.shader = null
             c.restore()
         }
@@ -997,13 +1302,14 @@ class Painter(ctx: Context) {
         lcd(c, G.lcd, detail, live)
 
         // the lid: the door you open by unfolding, brushed the other way, with a seam
-        val Ld = G.lid ?: return
+        // (the tabletop deck's front panel has none: its tape stands in the upper half)
+        val Ld = G.lid ?: run { keys(c, G, F, live); strip(c, G, F, detail, live); return }
         val lr = min(Ld.width(), Ld.height()) * 0.079f
         fill(F.lid[1]); p.setShadowLayer(dp(3f), 0f, dp(1f), 0x47000000); c.drawRoundRect(Ld, lr, lr, p); p.clearShadowLayer()
         metal(c, Ld, lr, intArrayOf(F.lid[0], F.lid[1], if (F.lacquer || F.aniso) F.stops[2] else F.stops[1]), true, F.lacquer, F.aniso)
         if (!F.lacquer && !F.aniso) {
             c.save(); path.reset(); path.addRoundRect(Ld, lr, lr, Path.Direction.CW); c.clipPath(path)
-            p.shader = RadialGradient(Ld.left + Ld.width() * 0.4f, Ld.top + Ld.height() * 0.32f, Ld.height() * 0.85f,
+            p.shader = RadialGradient(Ld.left + Ld.width() * (0.4f + 0.3f * Light.x), Ld.top + Ld.height() * (0.32f + 0.2f * Light.y), Ld.height() * 0.85f,
                 intArrayOf(Color.WHITE.a(0.22f), 0, Color.BLACK.a(0.14f)), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
             c.drawRect(Ld, p); p.shader = null
             c.restore()
@@ -1015,7 +1321,7 @@ class Painter(ctx: Context) {
         lens(c, G, detail, live.lifting)
 
         val fs = max(dp(9f), G.u * 0.034f)
-        engrave(c, "AUTO REVERSE", Ld.right - Ld.width() * 0.07f, Ld.top + Ld.height() * 0.075f, fs, F, Paint.Align.RIGHT, 0.2f)
+        engrave(c, "AUTO REVERSE", Ld.right - Ld.width() * 0.07f, Ld.top + Ld.height() * (if (G.wide) 0.075f else 0.06f), fs, F, Paint.Align.RIGHT, 0.2f)
         // the wordmark, deep-cut
         engrave(c, "NASTRO", Ld.centerX(), Ld.bottom - Ld.height() * 0.075f, min(G.u * 0.11f, dp(44f)), F, Paint.Align.CENTER, 0.42f)
 
@@ -1029,7 +1335,10 @@ class Painter(ctx: Context) {
         r.set(L.left - dp(2f), L.top - dp(2f), L.right + dp(2f), L.bottom + dp(2f))
         p.shader = LinearGradient(L.left, L.top, L.right, L.bottom, intArrayOf(0xFFF4F6F8.toInt(), 0xFF8B939C.toInt(), 0xFFD9DEE3.toInt()), null, Shader.TileMode.CLAMP)
         c.drawRoundRect(r, rad + dp(2f), rad + dp(2f), p); p.shader = null
-        fill(0xFF0C0F13.toInt()); c.drawRoundRect(L, rad, rad, p)
+        // 14 Nov 2026, Mechack: one tape, seen two ways. Behind the lens is the open compartment exactly as
+        // unfolding shows it: the same floor, the tape on the same spindles, through clear glass
+        p.shader = LinearGradient(L.left, L.top, L.right, L.bottom, 0xFF3A424B.toInt(), 0xFF1D2329.toInt(), Shader.TileMode.CLAMP)
+        c.drawRoundRect(L, rad, rad, p); p.shader = null
         c.save(); path.reset(); path.addRoundRect(L, rad, rad, Path.Direction.CW); c.clipPath(path)
         val tape = Deck.tape
         if (tape != null && !lifting) {
@@ -1037,14 +1346,16 @@ class Painter(ctx: Context) {
             val fl = if (Deck.flipping) cos(Deck.flip * PI).toFloat() else 1f
             c.rotate(G.rot); c.scale(G.k, G.k * max(0.02f, kotlin.math.abs(fl)))
             val facing = if (Deck.flipping && Deck.flip > 0.5f) (if (Deck.facing == 'A') 'B' else 'A') else Deck.facing
-            cassette(c, tape, true, detail, facing)
+            turn = G.rot; cassette(c, tape, true, detail, facing, spindle = true, shadow = 5f); turn = 0f
             c.restore()
         }
-        fill(0x6B101822); c.drawRect(L, p)
-        p.shader = if (G.wide) LinearGradient(0f, L.top, 0f, L.bottom, intArrayOf(0, Color.WHITE.a(0.18f), 0), floatArrayOf(0f, 0.22f, 0.34f), Shader.TileMode.CLAMP)
-            else LinearGradient(L.left, 0f, L.right, 0f, intArrayOf(0, Color.WHITE.a(0.18f), 0), floatArrayOf(0f, 0.22f, 0.34f), Shader.TileMode.CLAMP)
+        fill(0x1A101822); c.drawRect(L, p)
+        // the glass's glare slides as the phone tilts
+        val gd = (if (G.wide) Light.y else Light.x) * 0.2f
+        p.shader = if (G.wide) LinearGradient(0f, L.top, 0f, L.bottom, intArrayOf(0, Color.WHITE.a(0.2f), 0), floatArrayOf(0f, 0.22f + gd, 0.34f + gd), Shader.TileMode.CLAMP)
+            else LinearGradient(L.left, 0f, L.right, 0f, intArrayOf(0, Color.WHITE.a(0.2f), 0), floatArrayOf(0f, 0.22f + gd, 0.34f + gd), Shader.TileMode.CLAMP)
         c.drawRect(L, p)
-        p.shader = RadialGradient(L.centerX(), L.centerY(), max(L.width(), L.height()) * 0.6f, intArrayOf(0, Color.BLACK.a(0.45f)), floatArrayOf(0.3f, 1f), Shader.TileMode.CLAMP); c.drawRect(L, p)
+        p.shader = RadialGradient(L.centerX(), L.centerY(), max(L.width(), L.height()) * 0.6f, intArrayOf(0, Color.BLACK.a(0.22f)), floatArrayOf(0.3f, 1f), Shader.TileMode.CLAMP); c.drawRect(L, p)
         p.shader = null
         c.restore()
     }
@@ -1085,11 +1396,18 @@ class Painter(ctx: Context) {
         for (T in G.legends) {
             val onT = if (T.id == "megaBass") Deck.megaBass else Deck.autoRev
             val prox = live.proximity[T.id] ?: 0f
-            val a = (0.62f + 0.38f * max(prox, if (onT) 1f else 0f)) * max(0.2f, detail)
+            val wakeEnd = if (T.id == "autoRev") live.sideEnd else 0f
+            val a = (0.62f + 0.38f * max(max(prox, wakeEnd), if (onT) 1f else 0f)) * max(0.2f, detail)
             c.saveLayerAlpha(T.x, T.y - fs * 1.4f, T.x + T.w + fs * 6, T.y + fs * 0.6f, (a * 255).toInt())
             engrave(c, T.text, T.x + fs * 1.1f, T.y, fs, F, Paint.Align.LEFT, 0.2f)
             c.restore()
-            fill(if (onT) 0xFFFFAD33.toInt() else 0x661E2837); c.drawCircle(T.x + fs * 0.35f, T.y - fs * 0.32f, max(dp(2f), fs * 0.24f), p)
+            val dr = max(dp(2f), fs * 0.24f)
+            if (wakeEnd > 0.01f) {
+                // the side is running out: auto reverse's lamp pulses, ready to turn the tape
+                val pulse = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 700.0 * 2 * PI).toFloat()
+                p.setShadowLayer(dr * 2.2f, 0f, 0f, 0xFFFFAD33.toInt().a(wakeEnd * pulse))
+            }
+            fill(if (onT) 0xFFFFAD33.toInt() else 0x661E2837); c.drawCircle(T.x + fs * 0.35f, T.y - fs * 0.32f, dr, p); p.clearShadowLayer()
         }
         // the battery door: the settings live behind it
         val B = G.battery ?: return
@@ -1100,7 +1418,7 @@ class Painter(ctx: Context) {
             fill(Color.BLACK.a(0.22f)); c.drawRect(B.left + B.width() * 0.18f, yy, B.right - B.width() * 0.18f, yy + dp(0.8f), p)
             fill(Color.WHITE.a(0.35f)); c.drawRect(B.left + B.width() * 0.18f, yy + dp(0.8f), B.right - B.width() * 0.18f, yy + dp(1.3f), p)
         }
-        engrave(c, "1.5V AA", B.centerX(), B.top + B.height() * 0.86f, fs * 0.82f, F, Paint.Align.CENTER, 0.12f)
+        engrave(c, "1.2V NI-MH", B.centerX(), B.top + B.height() * 0.86f, fs * 0.82f, F, Paint.Align.CENTER, 0.12f)
     }
 
     // ---- the open compartment: the tape in all its glory --------------------------------------------
@@ -1125,8 +1443,9 @@ class Painter(ctx: Context) {
         // The readout and keys are on the face, which is the door: open, they have swung away with it
 
         val C = G.comp ?: return
-        val cr = u * 0.045f
-        val lip = u * 0.025f
+        // in the tape's millimetres, now the hole is cut to the tape (14 Nov 2026)
+        val cr = 3.2f * G.k
+        val lip = PlayerGeom.LIP * G.k
         // 1 the lip: a raised frame of the lid's metal, chamfered down into the hole
         val O = RectF(C.left - lip, C.top - lip, C.right + lip, C.bottom + lip)
         raisedPlate(c, O, cr + lip, F, !G.wide)
@@ -1153,6 +1472,7 @@ class Painter(ctx: Context) {
         c.drawRect(Fl, p)
         p.shader = BitmapShader(grain(), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT); p.alpha = 70
         c.drawRect(Fl, p); p.alpha = 255; p.shader = null
+        drive(c, G)
         chassis(c, G)
         // the deck's ambient darkness gathering towards the corners of the hole
         p.shader = RadialGradient(Fl.centerX(), Fl.centerY(), max(Fl.width(), Fl.height()) * 0.72f, intArrayOf(0, 0, Color.BLACK.a(0.4f)), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
@@ -1164,7 +1484,7 @@ class Painter(ctx: Context) {
         c.restore()
 
         // 4 the mechanism and the tape on its spindles
-        val m = G.at(0f, 2f)
+        val m = G.at(0f, 0f)
         c.save(); c.translate(m.x, m.y); c.rotate(G.rot); c.scale(G.k, G.k); mechanism(c); c.restore()
         val tape = Deck.tape
         if (tape != null) {
@@ -1172,7 +1492,7 @@ class Painter(ctx: Context) {
             val fl = if (Deck.flipping) cos(Deck.flip * PI).toFloat() else 1f
             c.rotate(G.rot); c.scale(G.k, G.k * max(0.02f, kotlin.math.abs(fl)))
             val facing = if (Deck.flipping && Deck.flip > 0.5f) (if (Deck.facing == 'A') 'B' else 'A') else Deck.facing
-            cassette(c, tape, true, detail, facing, spindle = true, shadow = 5f)
+            turn = G.rot; cassette(c, tape, true, detail, facing, spindle = true, shadow = 5f); turn = 0f
             c.restore()
         }
         c.restore()
@@ -1183,7 +1503,7 @@ class Painter(ctx: Context) {
         s.shader = null
 
         // 5 the battery bay at the foot, its AA in place
-        G.cell?.let { cellBay(c, G, it, F) }
+        G.cell?.let { cellBay(c, G, it, F, live.cellPop) }
     }
 
     /**
@@ -1191,10 +1511,9 @@ class Painter(ctx: Context) {
      * the same lip, its contacts at either end (a coil spring at the negative, a plate at the
      * positive) and the cell lying between them, drawn to the tape's scale.
      */
-    private fun cellBay(c: Canvas, G: PlayerGeom, B: RectF, F: Finish) {
-        val u = G.u
-        val lip = u * 0.022f
-        val cr = u * 0.03f
+    private fun cellBay(c: Canvas, G: PlayerGeom, B: RectF, F: Finish, pop: Float = 0f) {
+        val lip = PlayerGeom.LIP * G.k
+        val cr = 3f * G.k
         val O = RectF(B.left - lip, B.top - lip, B.right + lip, B.bottom + lip)
         raisedPlate(c, O, cr + lip, F, !G.wide)
         // the hole
@@ -1206,31 +1525,36 @@ class Painter(ctx: Context) {
         // the cell, in millimetres, lying along the bay
         val k = G.k
         c.save(); c.translate(B.centerX(), B.centerY()); if (!G.wide) c.rotate(0f) else c.rotate(90f); c.scale(k, k)
-        val L = 50.5f; val D = 14.5f
+        // 14 Nov 2026, Mechack: the Walkman's own battery, the flat "gumstick" NiMH (about 67 × 16.7 × 6 mm)
+        val L = 66.8f; val D = 16.7f
         // contacts: a coil spring at the negative end, a plate at the positive
         s.shader = null; s.strokeWidth = 0.7f; s.color = 0xFFC9CED4.toInt()
-        val sx0 = -L / 2 - 4.6f
-        path.reset(); path.moveTo(sx0, -D * 0.3f)
-        for (i in 0..7) { val xx = sx0 + i * 0.62f; path.lineTo(xx + 0.31f, if (i % 2 == 0) D * 0.3f else -D * 0.3f) }
+        val sx0 = -L / 2 - 2.6f
+        path.reset(); path.moveTo(sx0, -D * 0.22f)
+        for (i in 0..5) { val xx = sx0 + i * 0.42f; path.lineTo(xx + 0.21f, if (i % 2 == 0) D * 0.22f else -D * 0.22f) }
         c.drawPath(path, s)
-        fill(0xFFB9BEC4.toInt()); r.set(L / 2 + 0.6f, -D * 0.32f, L / 2 + 2.2f, D * 0.32f); c.drawRect(r, p)
-        // its shadow on the floor
-        fill(Color.BLACK.a(0.5f)); p.setShadowLayer(2.2f, 0.6f, 1.2f, Color.BLACK.a(0.8f)); r.set(-L / 2, -D / 2, L / 2, D / 2); c.drawRoundRect(r, 1.5f, 1.5f, p); p.clearShadowLayer()
-        // the wrapper: a cylinder, lit along its top
-        p.shader = LinearGradient(0f, -D / 2, 0f, D / 2, intArrayOf(0xFF0E3B26.toInt(), 0xFF2F8A5C.toInt(), 0xFF0B2A1B.toInt(), 0xFF051209.toInt()), floatArrayOf(0f, 0.28f, 0.7f, 1f), Shader.TileMode.CLAMP)
-        r.set(-L / 2, -D / 2, L / 2 - 1.2f, D / 2); c.drawRoundRect(r, 1.2f, 1.2f, p)
-        // a champagne band and the printing
-        p.shader = LinearGradient(0f, -D / 2, 0f, D / 2, intArrayOf(0xFF6B5A3C.toInt(), 0xFFEBD9B4.toInt(), 0xFF8A734C.toInt(), 0xFF3B3122.toInt()), floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
-        c.drawRect(L * 0.12f, -D / 2, L * 0.24f, D / 2, p); p.shader = null
-        print(c, "1.5V  AA", -L * 0.12f, D * 0.14f, 4.2f, 0xFFD9BB86.toInt(), true, Paint.Align.CENTER, 0.5f)
-        // the positive nub, and the flat negative end
-        p.shader = LinearGradient(0f, -2.8f, 0f, 2.8f, intArrayOf(0xFFF4F5F6.toInt(), 0xFF8D949B.toInt(), 0xFF4D5258.toInt()), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
-        r.set(L / 2 - 1.4f, -D * 0.42f, L / 2 - 0.2f, D * 0.42f); c.drawRect(r, p)
-        r.set(L / 2 - 0.3f, -2.6f, L / 2 + 0.6f, 2.6f); c.drawRoundRect(r, 0.4f, 0.4f, p)
-        r.set(-L / 2 - 0.4f, -D * 0.44f, -L / 2 + 0.5f, D * 0.44f); c.drawRect(r, p); p.shader = null
-        // moulded polarity marks on the floor beyond the ends
-        print(c, "−", sx0 - 2.6f, 1.6f, 5f, 0x66FFFFFF, true, Paint.Align.CENTER, 0f)
-        print(c, "+", L / 2 + 4.6f, 1.6f, 5f, 0x66FFFFFF, true, Paint.Align.CENTER, 0f)
+        fill(0xFFB9BEC4.toInt()); r.set(L / 2 + 0.2f, -D * 0.25f, L / 2 + 1.2f, D * 0.25f); c.drawRect(r, p)
+        // its shadow on the floor, spreading and falling away as the spring lifts it
+        fill(Color.BLACK.a(0.5f - 0.15f * pop)); p.setShadowLayer(2.2f + 3.5f * pop, 0.6f + 1.4f * pop, 1.2f + 2.6f * pop, Color.BLACK.a(0.8f - 0.2f * pop))
+        r.set(-L / 2, -D / 2, L / 2, D / 2); c.drawRoundRect(r, 1.5f, 1.5f, p); p.clearShadowLayer()
+        // risen: nearer the eye, so a little larger and up the screen
+        c.translate(-0.8f * pop, -1.6f * pop); c.scale(1f + 0.06f * pop, 1f + 0.06f * pop)
+        // the pack: flat, its long edges rounded over, in the lime green these packs wear, lit along its upper edge
+        p.shader = LinearGradient(0f, -D / 2, 0f, D / 2, intArrayOf(0xFFC6EC7A.toInt(), 0xFF9BD14B.toInt(), 0xFF86BE3A.toInt(), 0xFF4F7A1C.toInt()), floatArrayOf(0f, 0.18f, 0.8f, 1f), Shader.TileMode.CLAMP)
+        r.set(-L / 2, -D / 2, L / 2, D / 2); c.drawRoundRect(r, 2.2f, 2.2f, p); p.shader = null
+        // the white label across most of its face, with its printing
+        fill(0xFFF4F5F1.toInt()); r.set(-L / 2 + 6.5f, -D / 2 + 2f, L / 2 - 5.5f, D / 2 - 2f); c.drawRoundRect(r, 0.6f, 0.6f, p)
+        s.strokeWidth = 0.18f; s.color = 0x22000000; c.drawRoundRect(r, 0.6f, 0.6f, s)
+        print(c, "+", -L / 2 + 9f, 1.4f, 4.4f, 0xFF1E1E1E.toInt(), true, Paint.Align.CENTER, 0f)
+        print(c, "Ni-MH", -L / 2 + 17.5f, -0.6f, 2.6f, 0xFF1E1E1E.toInt(), true, Paint.Align.CENTER, 0.2f)
+        print(c, "1.2V  1400mAh", -L / 2 + 17.5f, 2.6f, 2f, 0xFF1E1E1E.toInt(), false, Paint.Align.CENTER, 0.1f)
+        fill(0x55000000)
+        for (i in 0 until 4) c.drawRect(-2f, -3.6f + i * 1.6f, 14f - (i % 2) * 3f, -3.2f + i * 1.6f, p)
+        fill(0xFF1E1E1E.toInt()); c.drawRect(L / 2 - 8.5f, -2.4f, L / 2 - 8f, 2.4f, p)   // the "−" bar, as printed on the real thing
+        // the metal contacts at each end
+        p.shader = LinearGradient(0f, -3f, 0f, 3f, intArrayOf(0xFFF4F5F6.toInt(), 0xFF8D949B.toInt(), 0xFF4D5258.toInt()), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+        r.set(-L / 2 - 0.2f, -D * 0.26f, -L / 2 + 0.9f, D * 0.26f); c.drawRoundRect(r, 0.3f, 0.3f, p)
+        r.set(L / 2 - 0.9f, -D * 0.2f, L / 2 + 0.2f, D * 0.2f); c.drawRoundRect(r, 0.3f, 0.3f, p); p.shader = null
         c.restore()
         c.restore()
         s.strokeWidth = dp(1.4f)
@@ -1280,10 +1604,38 @@ class Painter(ctx: Context) {
         c.restore()
     }
 
+    /**
+     * The body's edge where it meets the bezel (14 Nov 2026). Mechack: the player and the phone's
+     * bezel met artificially, a picture laid on glass. A unibody's metal doesn't stop at the glass:
+     * it rolls over a chamfer and turns down out of sight. So round the whole screen, following
+     * the screen's own rounded corners [rad], the metal darkens as it turns away, and a thin
+     * machined chamfer just inside catches the light on the side the light comes from.
+     */
+    fun edge(c: Canvas, w: Float, h: Float, rad: Float) {
+        val e = dp(9f)
+        // the turn-down: a soft shade gathering at the edge
+        s.shader = null; s.color = Color.BLACK.a(0.62f); s.strokeWidth = e
+        s.maskFilter = BlurMaskFilter(e * 0.9f, BlurMaskFilter.Blur.NORMAL)
+        r.set(0f, 0f, w, h); c.drawRoundRect(r, rad, rad, s)
+        s.maskFilter = null
+        // the chamfer: bright where it faces the light, gone where it faces away
+        val ins = dp(2.6f)
+        val lx = -0.62f + Light.x * 0.7f; val ly = -0.78f + Light.y * 0.7f
+        val cx = w / 2; val cy = h / 2; val reach = max(w, h) * 0.6f
+        s.strokeWidth = dp(1.3f)
+        s.shader = LinearGradient(cx + lx * reach, cy + ly * reach, cx - lx * reach, cy - ly * reach,
+            intArrayOf(Color.WHITE.a(0.42f), Color.WHITE.a(0.08f), Color.BLACK.a(0.4f)), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+        r.set(ins, ins, w - ins, h - ins); c.drawRoundRect(r, max(0f, rad - ins), max(0f, rad - ins), s)
+        // and the dark break just outside it, where the chamfer meets the turn-down
+        s.shader = null; s.strokeWidth = dp(0.8f); s.color = Color.BLACK.a(0.45f)
+        val o = ins - dp(1.1f)
+        r.set(o, o, w - o, h - o); c.drawRoundRect(r, max(0f, rad - o), max(0f, rad - o), s)
+    }
+
     /** The light falls off towards the body's edges, as on any curved, lit object. */
     private fun falloff(c: Canvas, R0: RectF, rad: Float) {
         c.save(); path.reset(); path.addRoundRect(R0, rad, rad, Path.Direction.CW); c.clipPath(path)
-        p.shader = RadialGradient(R0.left + R0.width() * 0.42f, R0.top + R0.height() * 0.38f, kotlin.math.hypot(R0.width(), R0.height()) * 0.62f,
+        p.shader = RadialGradient(R0.left + R0.width() * (0.42f + 0.14f * Light.x), R0.top + R0.height() * (0.38f + 0.12f * Light.y), kotlin.math.hypot(R0.width(), R0.height()) * 0.62f,
             intArrayOf(Color.WHITE.a(0.05f), 0, Color.BLACK.a(0.32f)), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
         c.drawRect(R0, p); p.shader = null
         c.restore()
@@ -1378,6 +1730,67 @@ class Painter(ctx: Context) {
             val q = G.at(sx, sy)
             screw(c, q.x, q.y, 1.5f * G.k, sx * 3 + sy)
         }
+    }
+
+    /**
+     * The drive beyond the tape's ends, on the compartment floor (14 Nov 2026): at the top the motor,
+     * a steel can on its bracket with its wires, its brass pulley and the flat belt running under the
+     * chassis to the capstan's flywheel; at the foot the reel gear train, nylon and brass, and the
+     * bronze leaf spring that holds a cassette down. In the shell's millimetres, turned with the tape.
+     */
+    private fun drive(c: Canvas, G: PlayerGeom) {
+        val e = G.ends
+        if (e < 6f) return
+        val end = CW / 2 + 1.2f
+        c.save(); c.translate(G.tx, G.ty); c.rotate(G.rot); c.scale(G.k, G.k)
+        // ---- the motor
+        val mx = -end - e * 0.5f; val my = -6f; val mr = min(e * 0.42f, 8.5f)
+        fill(0xFF15191D.toInt()); r.set(mx - mr - 1.6f, my - mr * 0.5f, mx + mr + 1.6f, my + mr * 0.5f); c.drawRoundRect(r, 0.8f, 0.8f, p)   // its bracket
+        for (bx in floatArrayOf(mx - mr - 0.6f, mx + mr + 0.6f)) { p.shader = RadialGradient(bx - 0.3f, my - 0.3f, 1.2f, 0xFFDDE1E5.toInt(), 0xFF5D646C.toInt(), Shader.TileMode.CLAMP); c.drawCircle(bx, my, 0.75f, p); p.shader = null }
+        p.setShadowLayer(1.6f, 0.5f, 1f, 0xAA000000.toInt())
+        p.shader = RadialGradient(mx - mr * 0.35f, my - mr * 0.35f, mr * 1.5f, intArrayOf(0xFFE3E7EB.toInt(), 0xFF8E969F.toInt(), 0xFF3B4148.toInt()), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(mx, my, mr, p); p.clearShadowLayer(); p.shader = null
+        s.strokeWidth = 0.3f; s.color = 0x55000000; c.drawCircle(mx, my, mr * 0.82f, s); c.drawCircle(mx, my, mr * 0.4f, s)
+        s.color = 0x40FFFFFF; r.set(mx - mr * 0.82f, my - mr * 0.82f, mx + mr * 0.82f, my + mr * 0.82f); c.drawArc(r, 200f, 70f, false, s)
+        // its wires: red and black from the tabs, away round the end
+        s.strokeWidth = 0.55f; s.strokeCap = Paint.Cap.ROUND
+        for ((dx, col) in listOf(-1.4f to 0xFFB3261E.toInt(), 1.4f to 0xFF1A1A1A.toInt())) {
+            s.color = col; path.reset(); path.moveTo(mx + dx, my - mr + 0.6f); path.quadTo(mx + dx, my - mr - 4f, mx + dx * 3f - 6f, -CH / 2 - 0.5f); c.drawPath(path, s)
+        }
+        s.strokeCap = Paint.Cap.BUTT
+        // the belt, from the pulley to the flywheel under the capstan (beneath the chassis from here)
+        val px = mx; val py = my + mr * 0.15f
+        s.strokeWidth = 0.7f; s.color = 0xFF0D0D0D.toInt()
+        c.drawLine(px - 1.6f, py, 10f, 40f, s); c.drawLine(px + 1.6f, py, 17f, 40f, s)
+        s.strokeWidth = 0.2f; s.color = 0x26FFFFFF; c.drawLine(px + 1.6f, py, 17f, 40f, s)
+        p.shader = RadialGradient(px - 0.5f, py - 0.5f, 2.2f, 0xFFF3D99B.toInt(), 0xFF8A6A2E.toInt(), Shader.TileMode.CLAMP); c.drawCircle(px, py, 1.7f, p); p.shader = null
+        fill(0xFF3B2E17.toInt()); c.drawCircle(px, py, 0.5f, p)
+        // ---- the reel gear train
+        val gx = end + e * 0.5f
+        fun gear(x: Float, y: Float, rad: Float, teeth: Int, body: Int, rim: Int, ang: Float) {
+            c.save(); c.translate(x, y); c.rotate(ang * 57.3f)
+            fill(Color.BLACK.a(0.45f)); c.drawCircle(0.4f, 0.7f, rad + 0.4f, p)
+            fill(rim)
+            for (i in 0 until teeth) { c.save(); c.rotate(i * 360f / teeth); c.drawRect(-0.35f, -rad - 0.5f, 0.35f, -rad + 0.3f, p); c.restore() }
+            p.shader = RadialGradient(-rad * 0.3f, -rad * 0.3f, rad * 1.3f, body, rim, Shader.TileMode.CLAMP); c.drawCircle(0f, 0f, rad, p); p.shader = null
+            s.strokeWidth = 0.22f; s.color = 0x33000000; c.drawCircle(0f, 0f, rad * 0.62f, s)
+            for (i in 0 until 3) { c.save(); c.rotate(i * 120f); c.drawLine(0f, rad * 0.25f, 0f, rad * 0.6f, s); c.restore() }
+            fill(0xFF6E757C.toInt()); c.drawCircle(0f, 0f, 0.55f, p)
+            c.restore()
+        }
+        val gr = min(e * 0.26f, 5.2f)
+        gear(gx, -14f, gr, 22, 0xFFF1EFE8.toInt(), 0xFFBDB8AA.toInt(), Deck.angL)
+        gear(gx + gr * 0.25f, -14f + gr + gr * 0.62f + 0.6f, gr * 0.62f, 14, 0xFFF0D392.toInt(), 0xFF9A7A3A.toInt(), -Deck.angL * 1.6f)
+        gear(gx, 12f, gr, 22, 0xFFF1EFE8.toInt(), 0xFFBDB8AA.toInt(), Deck.angR)
+        // the leaf spring that presses a cassette down, screwed to the floor
+        s.strokeWidth = 1.4f; s.color = 0xFFB08A4E.toInt(); s.strokeCap = Paint.Cap.ROUND
+        path.reset(); path.moveTo(end + 0.6f, 24f); path.quadTo(gx, 30f, end + e * 0.85f, 27f); c.drawPath(path, s)
+        s.strokeWidth = 0.3f; s.color = 0x66FFF1C9; c.drawPath(path, s); s.strokeCap = Paint.Cap.BUTT
+        c.restore()
+        // the screws, upright on screen
+        val q1 = G.at(end + e * 0.85f, 27f); screw(c, q1.x, q1.y, 1.2f * G.k, 30f)
+        val q2 = G.at(mx - mr - 0.6f, my); val q3 = G.at(mx + mr + 0.6f, my)
+        screw(c, q2.x, q2.y, 0.9f * G.k, 10f); screw(c, q3.x, q3.y, 0.9f * G.k, 50f)
     }
 
     private val SEG = mapOf('0' to "abcdef", '1' to "bc", '2' to "abged", '3' to "abgcd", '4' to "fgbc", '5' to "afgcd",
@@ -1509,7 +1922,7 @@ class Painter(ctx: Context) {
             if (rc.top > area.bottom || rc.bottom < area.top) continue
             c.save()
             c.translate(rc.centerX(), rc.centerY() + lean.getOrElse(sl.index) { 0f })
-            if (sl.tape === inDeck || sl.tape === pending) {
+            if (sl.tape === inDeck || sl.tape === pending || sl.tape === carried) {
                 // the case stays on the shelf, open, showing its card
                 fill(0x0AFFFFFF); r.set(-rc.width() / 2, -rc.height() / 2, rc.width() / 2, rc.height() / 2); c.drawRoundRect(r, dp(6f), dp(6f), p)
                 s.strokeWidth = dp(1f); s.color = 0x2EFFFFFF; s.pathEffect = android.graphics.DashPathEffect(floatArrayOf(dp(4f), dp(4f)), 0f)

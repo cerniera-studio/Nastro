@@ -152,3 +152,43 @@ Mechack: back to option 1, the Walkman on both screens. What he wants is the ope
 **The inside of the door** is the back of the face: the face's own brushed metal runs round the rim, a moulded panel steps down inside it with a chamfer and the rim's shadow, screwed through the outer rim, with the moulded groove on the hinge side where the index lives. The shelf is kept on it.
 
 Phone on its side: the same, the body above the crease with the battery bay beside the tape, the door below, the knuckles across.
+
+## Eighth review, 13–14 Nov: life size, light in the hand, the AA, the mechanism, carrying a tape
+
+Mechack, from the first build on his Fold: the finish is loved but reads a little flat, the player meeting the phone's bezel artificially, with little emotion; the tape too small, with dead space round it (it should look life-size, on both screens); the battery has no purpose; more mechanism, and its relationship to the tape; and dragging a tape from the shelf into the deck would be more analogue. The repo moved to cerniera-studio/Nastro.
+
+**Life size.** The tape is drawn at its real size, read from the screen's own pixels per millimetre, wherever it fits. Open, the compartment is cut to it as a real Walkman's is: 1.6 mm clear round the shell, the head assembly's 7.5 mm along its open edge, then the AA bay, the pair centred in the body. Folded, the controls give up a little height so the lid grows, and the hubs show behind the lens at their real 42.5 mm apart where the screen allows.
+
+**Light in the hand.** Anodised metal is never still in the hand. The phone's gravity sensor moves the light: the brushing's streak, the lid's sheen, the lens's glare and the cassette's glazing slide as the phone tilts. Only the change counts; the rest position follows the hand over a few seconds, so however it is held the light sits upper left until it moves. Round the whole screen, following the glass's own corner radius, the metal now turns down under the bezel: a soft shade at the edge and a thin machined chamfer just inside it, lit on the side the light comes from. The phone's frame reads as the Walkman's edge, not a frame round a picture.
+
+**The AA is the way in.** Folded, the settings are behind the battery door; open, they are under the battery itself: tap the AA and it springs up on its coil, its shadow spreading, and the settings open. SETTINGS has gone from the shelf.
+
+**The mechanism**, drawn now in the shell's own millimetres so each part meets the tape where a real one does: the head's face in the head opening pressing the tape into the pad; the capstan up through the shell's capstan hole behind the tape; the pinch roller on a pressed arm, swung on a pivot screw and pulled by its spring, coming in through its notch to press the tape against the capstan; the head plate screwed down on its slots, the head on its azimuth screw with tape-guide forks either side, its amber flex running away. Inside the shell the tape's path is drawn as the real one runs: from each pack to the guide roller in its corner, round it, and along the open edge (seen through clear shells).
+
+**Carrying a tape.** Open, hold a tape on the shelf, or upright slide it sideways off the shelf towards the deck, and it comes away in your fingers; it grows to life size and turns to lie as the compartment holds it as it nears the hole; let go over the hole and it falls onto the spindles. Let go elsewhere and it goes back to its place. A tap still loads it; holding a mixtape and letting go unmoved still opens it to write on.
+
+## Ninth review, 24 Nov: lost and restored, a bigger tape, the cover turns with the phone
+
+The eighth review had stayed on its branch (life-size) and never reached main, so builds after the new signing key went out without it. It was merged back in.
+
+**A bigger tape.** Mechack: there is room to spare; make the tape bigger. Upright, the half screen's width is all that limits it, and the lips, clearances, head strip and margins took about a fifth of that width. Now the hole runs across the body's whole width, its lip showing only above and below and running on under the hinge and the bezel at the sides. The head assembly is packed under the shell's foot as a real deck's is, within 4.4 mm of it (head plate, head, pinch roller, its arm and spring), and the clearance is cut to a real deck's. The tape is about 15% larger, close to its real size.
+
+**One size, the real one.** The tape had been matched in pixels across the two screens on the belief that they share one density. They don't seem to: the open phone's 1880 px span a screen about 136 mm wide, roughly 350 ppi, against the cover's roughly 420 (estimates from the screenshots and the phone's published size, not measured). Equal pixels made the open tape the physically smaller one. Each screen now draws the tape as near its real size as it has room for, so the size the two share is the real one.
+
+**The cover on its side turns with the phone** (Mechack, from the iPhone Duo's Duoman). A Walkman doesn't rearrange itself when turned: the face stays as it is on the hardware, readout at the camera end, and the whole of it turns with the phone. Touches are turned back to match, and the light stays fixed to the face.
+
+## Tenth review, 24 Nov: controls that adapt
+
+Mechack: Nastro is a fusion of the 90s and 00s with something forward-looking, so the controls should be dynamic and adaptive. The body keeps its hardware logic; the controls answer to how the phone is held, what the deck is doing and the room. From six ideas he chose four (thumb-following keys and keys rising to the finger were left out).
+
+**On its side, the controls turn upright.** Folded and turned, the face stays fixed to the hardware, but each key's symbol swivels to stand upright, then the keys glide along their channel so the column reads rewind, play, stop, fast forward from the top. The readout turns with them: its rows fade into a stacked readout across the strip (icons, what the deck is doing, direction and counter, then the title rising a line at a time like a ticker board).
+
+**Keys that answer to what's going on.** Hold sinks the keys flush and dims them, a lock you can see. A tape waiting, stopped, makes play glow faintly, breathing. With auto reverse on, its legend and lamp wake in a side's last 20 seconds of music.
+
+**The tabletop deck.** Open, on its side and stood half open (read from the hinge's angle sensor, between about 30° and 145°), the phone is a deck: the compartment stands in the upper half, the lower half lies flat as a front panel with the readout and switches across the top and a full-width bank of keys below. A deck's compartment is shut behind its window, so the door reads as shut: the tape plays and the keys work. Laid flat, the door is open again and the tape stops, as unfolding does. The shelf is not reachable in tabletop; lay it flat to change tapes.
+
+**Readout on its side, second version** (Mechack, from a recording: the stacked readout was clumsy, its title broken into five-letter lines). Only what is read at a glance turns upright, in a block at the strip's top end: a pictogram of what the deck is doing (▶ ■ ▶▶ ◀◀, a lock for Hold, eject for Open) with the tape's direction beside it, and a large counter. The title runs along the strip in one line, as the NASTRO wordmark and the legends do, read like a spine, divided from the block by a fine rule.
+
+**Low light, second version** (Mechack: the symbols were hard to make out in low light). The glow had turned the symbols amber on the cream caps, which barely differ in tone. Now the caps dim with the room, as they would with its light gone, and the symbols are lit from behind in warm white within an amber halo: light on a dark key. A waiting tape rings play's cap with a breathing light rather than tinting its symbol, which had the same problem in daylight.
+
+**Keys lit by the room.** The light sensor, smoothed over about a second: below about 40 lux the keys' symbols are backlit with a warm glow, like a car's dashboard at night, fully by 4 lux; from about 1,500 lux (daylight) to 15,000 (sun) their engraving reads deeper.

@@ -20,6 +20,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -46,7 +47,6 @@ class StageView(ctx: Context) : View(ctx) {
     private val audio = ctx.getSystemService(android.media.AudioManager::class.java)
     private var volAt = 0L
     private val live = Painter.Live()
-    private val settingsLink = RectF()
 
     private var open = false                 // unfolded: the compartment is open
     private var swing = 1f                   // the door swinging open after unfolding, 0..1
@@ -67,6 +67,19 @@ class StageView(ctx: Context) : View(ctx) {
     private var shelfScroll = 0f
     private var shelfContent = 0f
     private val scroller = OverScroller(ctx)
+
+    private var cellPopAt = 0L
+    /** The AA's spring: up quickly, held while the settings open, settling back down. */
+    private fun cellPop(now: Long): Float {
+        val a = (now - cellPopAt).toFloat()
+        if (cellPopAt == 0L || a > 1100f) return 0f
+        return when {
+            a < 160f -> easeOut(a / 160f) * 1.08f
+            a < 240f -> 1.08f - (a - 160f) / 80f * 0.08f
+            a < 700f -> 1f
+            else -> 1f - easeOut((a - 700f) / 400f)
+        }
+    }
 
     private var pressed: Deck.Key? = null
     private var pressedAt = 0L
@@ -90,8 +103,68 @@ class StageView(ctx: Context) : View(ctx) {
         }
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); Deck.listen(changed); Prefs.listen(changed) }
-    override fun onDetachedFromWindow() { Deck.unlisten(changed); Prefs.unlisten(changed); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow(); Deck.listen(changed); Prefs.listen(changed); Light.start(context, changed)
+        Senses.start(context, { checkTabletop() }, { invalidate() })
+    }
+    override fun onDetachedFromWindow() { Senses.stop(); Light.stop(); Deck.unlisten(changed); Prefs.unlisten(changed); super.onDetachedFromWindow() }
+
+    // ---- the tabletop deck (24 Nov 2026) --------------------------------------------------------
+    // Mechack chose it from the ideas for adaptive controls. Open, on its side, and stood half open on
+    // a table, the phone is a deck: the upper half stands up as the compartment, the lower half lies
+    // flat as the front panel with its readout, switches and a full-width bank of keys. A deck's
+    // compartment is shut behind its window, so the door logic reads it as shut: the tape plays and the
+    // keys work. Laid flat again, the door is open once more and the tape stops, as unfolding does.
+    private var tabletop = false
+    private var panel: PlayerGeom? = null
+
+    private fun checkTabletop() {
+        val a = Senses.hinge
+        val can = open && stacked && a != null
+        // a little hysteresis so the deck doesn't flicker at the edge of the posture
+        val now = can && a!! > 30f && a < if (tabletop) 160f else 145f
+        if (now == tabletop) return
+        tabletop = now
+        if (now) { Sfx.play(Sfx.S.DOOR_SHUT, 0.7f); clunk(); Deck.setOpen(false) }
+        else { if (open) { Sfx.play(Sfx.S.DOOR_OPEN, 0.6f); Deck.setOpen(true) } }
+        layoutAll(); invalidate()
+    }
+
+    // ---- the room's light (24 Nov 2026) -------------------------------------------------------------
+    // Smoothed over a second or so in log terms, so a passing shadow doesn't flicker the keys
+    private var luxLog = Float.NaN
+    private fun roomLight(dt: Float) {
+        val lx = Senses.lux ?: run { live.dark = 0f; live.bright = 0f; return }
+        val target = ln(max(0.5f, lx))
+        luxLog = if (luxLog.isNaN()) target else luxLog + (target - luxLog) * (1 - exp(-dt / 1.2f))
+        // dark below about 40 lux (a dim room), fully lit by 4 (lights out); bright from 1,500 (daylight) to 15,000 (sun)
+        live.dark = ((ln(40f) - luxLog) / (ln(40f) - ln(4f))).coerceIn(0f, 1f)
+        live.bright = ((luxLog - ln(1500f)) / (ln(15000f) - ln(1500f))).coerceIn(0f, 1f)
+    }
+    private val roomSettling get() = Senses.lux?.let { abs(ln(max(0.5f, it)) - luxLog) > 0.02f } ?: false
+
+    // ---- keys that answer to what's going on (24 Nov 2026) ---------------------------------------
+    private var holdNow = 0f; private var inviteNow = 0f; private var endNow = 0f
+    private fun keyState(dt: Float) {
+        holdNow += ((if (Deck.hold) 1f else 0f) - holdNow) * (1 - exp(-dt / 0.12f))
+        // a tape waits, stopped, with the door shut: play invites
+        val waiting = Deck.tape != null && Deck.mode == Deck.Mode.STOP && Deck.door < 0.05f && !Deck.compartmentOpen && !Deck.hold && Deck.pending == null
+        inviteNow += ((if (waiting) 1f else 0f) - inviteNow) * (1 - exp(-dt / 0.6f))
+        // the side's music running out, with auto reverse on: the last 20 seconds
+        val left = Deck.musicLeft()
+        val ending = Deck.autoRev && Deck.mode == Deck.Mode.PLAY && left in 0.0..20.0
+        endNow += ((if (ending) (1 - left / 20.0).toFloat().coerceIn(0.35f, 1f) else 0f) - endNow) * (1 - exp(-dt / 0.4f))
+        live.holdSink = holdNow; live.invite = inviteNow; live.sideEnd = endNow
+    }
+    private val keysSettling get() = abs((if (Deck.hold) 1f else 0f) - holdNow) > 0.004f || inviteNow > 0.01f || endNow > 0.01f || live.dark > 0.01f
+
+    /** The screen's own corner radius, so the body's edge follows the glass. */
+    private fun screenRadius(): Float {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            rootWindowInsets?.getRoundedCorner(android.view.RoundedCorner.POSITION_TOP_LEFT)?.let { return it.radius.toFloat() }
+        }
+        return dp(24f)
+    }
 
     private fun clunk() {
         shake = 1f
@@ -116,6 +189,14 @@ class StageView(ctx: Context) : View(ctx) {
         // not guessed from this window's proportions, which a split screen or the Fold8 Ultra's
         // near-square inner screen could put on the wrong side of a ratio
         val nowOpen = onMainScreen(w, h)
+        display?.let { Light.rotation = it.rotation }
+        // folded and turned on its side, the face turns with the phone rather than re-laying itself out
+        val rot = display?.rotation ?: android.view.Surface.ROTATION_0
+        setTurn(if (!nowOpen && w > h) when (rot) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        } else 0)
         // The crease runs down the inner screen's upright centre; turned on its side it runs
         // across. Then the open Walkman is laid out across it, everything still upright (11 Nov 2026:
         // turning the whole frame sideways left the type and the tape on their sides)
@@ -131,9 +212,22 @@ class StageView(ctx: Context) : View(ctx) {
             // Folding: the door has shut; the face appears with the clunk of the catch, and it plays
             swing = 1f; view = 0f; viewTarget = 0f
             post { Sfx.play(Sfx.S.DOOR_SHUT, 0.8f); clunk(); Deck.setOpen(false) }
-        } else Deck.setOpen(nowOpen)
+        } else Deck.setOpen(nowOpen && !tabletop)
         open = nowOpen
+        if (!(open && stacked) && tabletop) tabletop = false
         layoutAll()
+        // the posture may already be half open when the phone is turned onto its side
+        checkTabletop()
+    }
+
+    // Turning straight from one side to the other (90 to 270) keeps the window's size, so no
+    // onSizeChanged: catch it here
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        if (!open && width > height) {
+            val t = when (display?.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_270 -> 270; else -> 0 }
+            if (t != turn) { setTurn(t); layoutAll(); invalidate() }
+        }
     }
 
     /** True when this window is on the inner (main) screen and has most of it, not a split share. */
@@ -150,15 +244,64 @@ class StageView(ctx: Context) : View(ctx) {
     // Open and on its side, the crease runs across the screen: the deck takes the top half and the
     // inside of the door, with the shelf, the bottom half.
     private var stacked = false
-    private val fw get() = width
-    private val fh get() = height
-    private val pl get() = paddingLeft
-    private val pt get() = paddingTop
-    private val pr get() = paddingRight
-    private val pb get() = paddingBottom
+
+    // ---- the cover screen on its side (24 Nov 2026) ----------------------------------------------
+    // Mechack, from the iPhone Duo's Duoman: a Walkman doesn't rearrange itself when you turn it. Folded
+    // and on its side, the face stays as it is on the hardware, readout at the camera end, keys at the
+    // other, and simply turns with the phone. Everything is laid out and drawn in an upright frame and
+    // turned onto the screen; touches are turned back into it. 90: the phone turned anticlockwise
+    // (the top of the face to the screen's left); 270: clockwise.
+    private var turn = 0
+    private val turnM = android.graphics.Matrix()
+    private val turnInv = android.graphics.Matrix()
+    private val fw get() = if (turn != 0) height else width
+    private val fh get() = if (turn != 0) width else height
+    private val pl get() = when (turn) { 90 -> paddingBottom; 270 -> paddingTop; else -> paddingLeft }
+    private val pt get() = when (turn) { 90 -> paddingLeft; 270 -> paddingRight; else -> paddingTop }
+    private val pr get() = when (turn) { 90 -> paddingTop; 270 -> paddingBottom; else -> paddingRight }
+    private val pb get() = when (turn) { 90 -> paddingRight; 270 -> paddingLeft; else -> paddingBottom }
+
+    // The keys adapt (24 Nov 2026): the face stays fixed to the hardware, but the symbols on its keys
+    // swivel to stand upright and the keys glide into an order that reads from the top
+    private var glyphNow = 0f
+    private var orderNow = 0f
+    private val glyphTarget get() = when (turn) { 90 -> 90f; 270 -> -90f; else -> 0f }
+    // turned anticlockwise, the row's left end (rewind) would sit at the bottom: reverse it
+    private val orderTarget get() = if (turn == 90) 1f else 0f
+
+    private fun setTurn(t: Int) {
+        turn = t
+        turnM.reset()
+        // upright (x, y) to the screen: 90 → (y, H − x); 270 → (W − y, x)
+        when (t) {
+            90 -> { turnM.setRotate(-90f); turnM.postTranslate(0f, height.toFloat()) }
+            270 -> { turnM.setRotate(90f); turnM.postTranslate(width.toFloat(), 0f) }
+        }
+        turnM.invert(turnInv)
+        // the light is fixed to the face, which is fixed to the hardware
+        if (t != 0) Light.rotation = android.view.Surface.ROTATION_0
+    }
 
     /** The screen's own pixels per millimetre: the tape is drawn no bigger than a real one. */
     private val pxPerMm get() = resources.displayMetrics.xdpi / 25.4f
+
+    /**
+     * The scale to draw the tape at on this layout, in px per mm (14 Nov 2026). Mechack: the tape
+     * behind the cover's lens looked bigger than the one in the open compartment; one tape, one size.
+     * Each screen's upright layout records how big the tape can be there, as a fraction of its real
+     * size; every layout draws it no bigger than both screens allow, so it is the same physical size
+     * folded and open.
+     */
+    private fun matched(here: String?, other: String, geom: (Float) -> PlayerGeom): Float {
+        // 24 Nov 2026: no longer matched in pixels. That took the two screens to share one density, but
+        // the open phone's 1880 px span a screen about 136 mm wide (roughly 350 ppi) against the cover's
+        // roughly 420, so equal pixels made the open tape the smaller one, and held the cover's back to it.
+        // The size the two share is the real one: each screen draws the tape as near its real size as it
+        // has room for. Open and upright, the half screen is barely wider than a cassette, so the room
+        // runs out at about its real size; it needs no cap there, which also keeps the open screen's
+        // reported dpi (not trusted) out of it. Folded, the cover's own dpi holds it to life size.
+        return if (here == "main") 0f else pxPerMm
+    }
 
     private fun layoutAll() {
         val L = pl.toFloat(); val T = pt.toFloat()
@@ -172,24 +315,37 @@ class StageView(ctx: Context) : View(ctx) {
             val half = Hf / 2f
             val g = dp(10f)
             val bleed = RectF(0f, 0f, Wf, half)
-            deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, pxPerMm)
-            face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed)
+            val m = matched("main", "cover") { PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, it) }
+            deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
+            face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
             shelfBg.set(0f, half, Wf, Hf)
-            shelfArea.set(L + dp(12f), half + dp(6f), L + W - dp(12f), T + H - dp(6f))
+            if (tabletop) {
+                // the lower half is the deck's front panel; there is no shelf to reach
+                panel = PlayerGeom.panel(L + g, half + g, W - g * 2, T + H - half - g * 2, RectF(0f, half, Wf, Hf))
+                shelfArea.set(0f, 0f, 0f, 0f)
+            } else {
+                panel = null
+                shelfArea.set(L + dp(12f), half + dp(6f), L + W - dp(12f), T + H - dp(6f))
+            }
         } else if (open) {
             val half = Wf / 2f
             val g = dp(10f)
             val bleed = RectF(half, 0f, Wf, Hf)
-            val bw = Wf - pr - half - g * 2
-            deck = PlayerGeom.bay(half + g, T + g, bw, H - g * 2, bleed, pxPerMm)
-            face = PlayerGeom.face(half + g, T + g, bw, H - g * 2, bleed)
+            // the hole runs across the body's whole width: under the hinge one side, the bezel the other
+            val bw = Wf - pr - half
+            val m = matched("main", "cover") { PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, it) }
+            deck = PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, m)
+            face = PlayerGeom.face(half + g, T + g, bw, H - g * 2, bleed, m)
+            deck?.let { Prefs.setAnchor(it.tx - half, it.ty) }
             shelfBg.set(0f, 0f, half, Hf)
             shelfArea.set(L + dp(12f), T + dp(6f), half - dp(12f), T + H - dp(6f))
         } else {
             val v = easeOut(view)
             val off = v * Wf * 1.04f
             val g = dp(8f)
-            deck = PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, RectF(off, 0f, Wf + off, Hf))
+            val bleed = RectF(off, 0f, Wf + off, Hf)
+            val m = matched(if (H > W) "cover" else null, "main") { PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, bleed, it) }
+            deck = PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, bleed, m, if (H > W) Prefs.anchor() else null)
             val so = (1 - v) * Wf * 1.04f
             shelfBg.set(-so, 0f, Wf - so, Hf)
             shelfArea.set(L + dp(10f) - so, T + dp(6f), L + W - dp(10f) - so, T + H - dp(6f))
@@ -279,7 +435,10 @@ class StageView(ctx: Context) : View(ctx) {
     }
 
     // ---- drawing -------------------------------------------------------------------------------
-    override fun onDraw(c: Canvas) = scene(c)
+    override fun onDraw(c: Canvas) {
+        if (turn == 0) { scene(c); return }
+        c.save(); c.concat(turnM); scene(c); c.restore()
+    }
 
     private fun scene(c: Canvas) {
         val now = SystemClock.uptimeMillis()
@@ -312,7 +471,19 @@ class StageView(ctx: Context) : View(ctx) {
         val lifting = Deck.pending != null && Deck.tape !== Deck.pending
         live.pressed = pressed; live.pressAge = now - pressedAt; live.proximity = proximity; live.lifting = lifting
         live.volume = volume(); live.volAge = now - volAt
-        if (open) {
+        live.cellPop = cellPop(now)
+        // the symbols swivel first, then the keys glide into place
+        glyphNow += (glyphTarget - glyphNow) * (1 - exp(-dt / 0.09f)); if (abs(glyphTarget - glyphNow) < 0.2f) glyphNow = glyphTarget
+        val glyphDone = abs(glyphTarget - glyphNow) < 25f
+        if (glyphDone || orderNow != orderTarget) orderNow += (orderTarget - orderNow) * (1 - exp(-dt / 0.12f))
+        if (abs(orderTarget - orderNow) < 0.003f) orderNow = orderTarget
+        live.glyph = glyphNow; live.order = orderNow
+        keyState(dt); roomLight(dt)
+        val P = panel
+        if (open && tabletop && P != null) {
+            painter.bay(c, G, live)
+            painter.face(c, P, live)
+        } else if (open) {
             if (swing >= 0.999f) {
                 drawShelf(c)
                 painter.bay(c, G, live)
@@ -321,9 +492,20 @@ class StageView(ctx: Context) : View(ctx) {
             drawShelf(c)
             painter.face(c, G, live)
         }
-        // the tape in flight from the shelf
+        // the tape in flight from the shelf, or from the hand that dropped it
         val pend = Deck.pending
-        if (pend != null && lifting) {
+        if (pend == null || pend !== dropTape) { dropFrom = null; dropTape = null }
+        val df = dropFrom
+        if (pend != null && lifting && df != null) {
+            val tt = easeOut(((now - Deck.pendingSince) / Deck.FLIGHT_MS.toFloat()).coerceIn(0f, 1f))
+            c.save()
+            c.translate(lerp(df[0], G.tx, tt), lerp(df[1], G.ty, tt))
+            c.rotate(G.rot)
+            val kk = G.k * (1.03f - 0.03f * tt)
+            c.scale(kk, kk)
+            painter.cassette(c, pend, false, 1f, shadow = 9f - 4f * tt)
+            c.restore()
+        } else if (pend != null && lifting) {
             val sl = slots.firstOrNull { it.tape === pend }
             if (sl != null) {
                 val tt = easeOut(((now - Deck.pendingSince) / Deck.FLIGHT_MS.toFloat()).coerceIn(0f, 1f))
@@ -342,9 +524,13 @@ class StageView(ctx: Context) : View(ctx) {
         // the crease is the Walkman's hinge: its knuckles join the door to the body (13 Nov 2026)
         if (open && stacked) painter.hinge(c, fh / 2f, 0f, fw.toFloat(), true)
         else if (open) painter.hinge(c, fw / 2f, 0f, fh.toFloat(), false)
+        // a tape in the hand rides over everything, the hinge included
+        drawCarry(c, G, now)
+        // the metal turns down under the bezel, all round the glass
+        painter.edge(c, fw.toFloat(), fh.toFloat(), screenRadius())
 
         val busy = Deck.animating() || Deck.mode == Deck.Mode.PLAY || swing < 1f || shake > 0 || abs(view - viewTarget) > 0.001f ||
-            !scroller.isFinished || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200)
+            !scroller.isFinished || keysSettling || roomSettling || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
         if (busy) postInvalidateOnAnimation()
     }
 
@@ -394,12 +580,8 @@ class StageView(ctx: Context) : View(ctx) {
             val cy = shelfArea.top + dp(56f) - shelfScroll
             if (cy > shelfArea.top) painter.handwrite(c, "fold shut to play", shelfArea.right - dp(42f), cy, dp(20f), shelfArea.width() * 0.5f, 0xFFFFAD33.toInt(), android.graphics.Paint.Align.RIGHT)
         }
-        // the way to the settings when unfolded: on the shelf's heading, scrolling away with it
-        val sy = shelfArea.top + dp(30f) - shelfScroll
-        if (sy > shelfArea.top) {
-            painter.label(c, "SETTINGS", shelfArea.right - dp(42f), sy, dp(12f), 0xFFD8E2EC.toInt())
-            settingsLink.set(shelfArea.right - dp(130f), sy - dp(22f), shelfArea.right - dp(32f), sy + dp(10f))
-        } else settingsLink.setEmpty()
+        // 14 Nov 2026: no SETTINGS on the shelf. Open, the settings are behind the battery, as they are
+        // behind the battery door folded: tap the AA and it springs up
         drawIndex(c, SystemClock.uptimeMillis())
     }
 
@@ -455,7 +637,101 @@ class StageView(ctx: Context) : View(ctx) {
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(e: MotionEvent): Boolean = touch(e)
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (turn == 0) return touch(e)
+        val t = MotionEvent.obtain(e)
+        t.transform(turnInv)
+        return try { touch(t) } finally { t.recycle() }
+    }
+
+    // ---- carrying a tape (14 Nov 2026) --------------------------------------------------------------
+    // Mechack: dragging a tape from the shelf and dropping it in the player is more analogue. Open,
+    // hold a tape (or slide it sideways off the shelf towards the deck, upright) and it comes away in
+    // your fingers; it grows to its real size as it nears the compartment and turns to lie as the
+    // compartment holds it; let go over the hole and it drops onto the spindles. Let go elsewhere and
+    // it goes back to its place. A tap still loads it; holding a mixtape and letting go unmoved still
+    // opens it to write on.
+    private var carry: Painter.Slot? = null
+    private var carryX = 0f; private var carryY = 0f
+    private var carryMoved = 0f
+    private var carryHome = 0L                 // the moment a tape let go away from the deck began going back
+    private val homeFrom = FloatArray(2)
+    private var homeSlot: Painter.Slot? = null
+    /** Where a dropped tape left the hand: its flight to the spindles starts there. x, y, scale, turn. */
+    private var dropFrom: FloatArray? = null
+    private var dropTape: Tape? = null
+    private var downX = 0f; private var downY = 0f
+    private var downSlot: Painter.Slot? = null
+
+    private val pickUp = Runnable {
+        val sl = downSlot ?: return@Runnable
+        if (open && (shelfFrom?.third ?: 99f) < dp(8f)) startCarry(sl, downX, downY)
+    }
+
+    private fun startCarry(sl: Painter.Slot, x: Float, y: Float) {
+        shelfFrom?.let { (_, s0, _) -> shelfScroll = s0 }
+        shelfFrom = null; vt?.recycle(); vt = null
+        removeCallbacks(longPress); holdSlot = null
+        carry = sl; carryX = x; carryY = y; carryMoved = 0f
+        painter.carried = sl.tape
+        haptic(HapticFeedbackConstants.LONG_PRESS); Sfx.play(Sfx.S.WIND_KEY, 0.3f)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        invalidate()
+    }
+
+    /** How near the carried tape is to the compartment: 0 at the shelf, 1 over the hole. */
+    private fun nearness(G: PlayerGeom, sl: Painter.Slot): Float {
+        val d0 = hypot(G.win.centerX() - sl.rect.centerX(), G.win.centerY() - sl.rect.centerY())
+        val d = hypot(G.win.centerX() - carryX, G.win.centerY() - carryY)
+        return (1 - d / max(1f, d0)).coerceIn(0f, 1f)
+    }
+
+    private fun overDeck(G: PlayerGeom, x: Float, y: Float) = G.win.near(x, y, dp(28f))
+
+    private fun drawCarry(c: Canvas, G: PlayerGeom, now: Long) {
+        val sl = carry
+        if (sl != null) {
+            val t = nearness(G, sl)
+            val e = t * t * (3 - 2 * t)
+            val k0 = sl.rect.width() / (PlayerGeom.CW + 4) * 1.08f
+            val over = overDeck(G, carryX, carryY)
+            c.save()
+            c.translate(carryX, carryY - dp(18f) * (1 - e))
+            c.rotate(G.rot * e)
+            val kk = lerp(k0, G.k * if (over) 1.03f else 1f, e)
+            c.scale(kk, kk)
+            painter.cassette(c, sl.tape, false, 1f, shadow = 9f)
+            c.restore()
+            return
+        }
+        // let go away from the deck: back to its place
+        val hs = homeSlot ?: return
+        val a = ((now - carryHome) / 260f).coerceIn(0f, 1f)
+        if (a >= 1f) { homeSlot = null; painter.carried = null; return }
+        val q = easeOut(a)
+        val k0 = hs.rect.width() / (PlayerGeom.CW + 4)
+        c.save(); c.translate(lerp(homeFrom[0], hs.rect.centerX(), q), lerp(homeFrom[1], hs.rect.centerY(), q))
+        c.scale(k0 * (1.08f - 0.08f * q), k0 * (1.08f - 0.08f * q))
+        painter.cassette(c, hs.tape, false, 1f, shadow = 6f); c.restore()
+        postInvalidateOnAnimation()
+    }
+
+    private fun endCarry(G: PlayerGeom, x: Float, y: Float, up: Boolean) {
+        val sl = carry ?: return
+        carry = null
+        if (up && overDeck(G, x, y) && sl.tape !== Library.BLANK) {
+            // dropped in: the flight from the hand to the spindles is a short fall
+            dropFrom = floatArrayOf(x, y, G.k, G.rot); dropTape = sl.tape
+            painter.carried = null
+            pick(sl)
+        } else if (up && carryMoved < dp(8f) && sl.tape.mix) {
+            painter.carried = null
+            haptic(HapticFeedbackConstants.LONG_PRESS); onEditMixtape?.invoke(sl.tape)
+        } else {
+            homeSlot = sl; carryHome = SystemClock.uptimeMillis(); homeFrom[0] = x; homeFrom[1] = y
+        }
+        invalidate()
+    }
 
     // Holding a mixtape on the shelf opens it to write on again
     private var holdSlot: Painter.Slot? = null
@@ -473,22 +749,34 @@ class StageView(ctx: Context) : View(ctx) {
         val x = e.x; val y = e.y
         if (needsPermission) { if (e.action == MotionEvent.ACTION_UP) onAskPermission?.invoke(); return true }
         val G = deck ?: return true
+        // the keys, switches and battery door: on the face, or on the tabletop deck's front panel
+        val C = if (open && tabletop) panel ?: G else G
+        val panelUp = C !== G
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 scroller.forceFinished(true)
-                wakeLegends(G, x, y)
-                if (open && settingsLink.near(x, y, dp(6f))) { onOpenSettings?.invoke(); return true }
+                wakeLegends(C, x, y)
                 if (!open || swing >= 0.999f) {
-                    for (K in G.keys) if (K.rect.near(x, y, dp(4f))) {
+                    // touches follow where the keys are going
+                    val row = if (orderTarget > 0.5f && C.keysRev.isNotEmpty()) C.keysRev else C.keys
+                    for (K in row) if (K.rect.near(x, y, dp(4f))) {
                         pressed = K.key; pressedAt = SystemClock.uptimeMillis(); pressKey(K.key); invalidate(); return true
                     }
                 }
-                for (T in G.legends) if (x > T.x - dp(6f) && x < T.x + T.w && y > T.y - T.h && y < T.y + T.h * 0.4f) {
+                for (T in C.legends) if (x > T.x - dp(6f) && x < T.x + T.w && y > T.y - T.h && y < T.y + T.h * 0.4f) {
                     if (!Deck.hold) Sfx.play(Sfx.S.STOP, 0.35f)
                     Deck.toggle(T.id); proximity[T.id] = 1f; invalidate(); return true
                 }
-                G.hold?.let { if (it.near(x, y, dp(10f))) { Sfx.play(Sfx.S.WIND_KEY, 0.5f); Deck.toggle("hold"); invalidate(); return true } }
-                G.battery?.let { if (it.near(x, y, dp(4f))) { Sfx.play(Sfx.S.DOOR_OPEN, 0.5f); onOpenSettings?.invoke(); return true } }
+                C.hold?.let { if (it.near(x, y, dp(10f))) { Sfx.play(Sfx.S.WIND_KEY, 0.5f); Deck.toggle("hold"); invalidate(); return true } }
+                (if (panelUp) C.battery else G.battery)?.let { if (it.near(x, y, dp(4f))) {
+                    if (open && !panelUp) {
+                        // the AA springs up out of its bay on its coil; the settings are under it
+                        cellPopAt = SystemClock.uptimeMillis(); Sfx.play(Sfx.S.WIND_KEY, 0.45f); haptic(HapticFeedbackConstants.CONTEXT_CLICK)
+                        postDelayed({ onOpenSettings?.invoke() }, 240)
+                        invalidate()
+                    } else { Sfx.play(Sfx.S.DOOR_OPEN, 0.5f); onOpenSettings?.invoke() }
+                    return true
+                } }
                 G.wheel?.let { if (it.near(x, y, dp(16f))) { wheelFrom = y to volume(); parent?.requestDisallowInterceptTouchEvent(true); return true } }
                 val inWin = x > G.win.left && x < G.win.right && y > G.win.top && y < G.win.bottom
                 if (inWin && Deck.door < 0.05f && Deck.pending == null && (open || view < 0.5f)) {
@@ -510,9 +798,16 @@ class StageView(ctx: Context) : View(ctx) {
                 if (shelfArea.contains(x, y) && (open || view > 0.5f)) {
                     shelfFrom = Triple(y, shelfScroll, 0f)
                     vt?.recycle(); vt = VelocityTracker.obtain().also { it.addMovement(e) }
-                    holdSlot = slots.firstOrNull { it.rect.contains(x, y) && it.tape.mix && it.tape !== Library.BLANK }
-                    removeCallbacks(longPress)
-                    if (holdSlot != null) postDelayed(longPress, 480)
+                    removeCallbacks(longPress); removeCallbacks(pickUp)
+                    downX = x; downY = y
+                    downSlot = slots.firstOrNull { it.rect.contains(x, y) && it.tape !== Library.BLANK }
+                    if (open) {
+                        // open: holding a tape lifts it off the shelf
+                        if (downSlot != null) postDelayed(pickUp, 300)
+                    } else {
+                        holdSlot = slots.firstOrNull { it.rect.contains(x, y) && it.tape.mix && it.tape !== Library.BLANK }
+                        if (holdSlot != null) postDelayed(longPress, 480)
+                    }
                     return true
                 }
                 if (!open && view > 0.5f) { back(); return true }
@@ -520,8 +815,17 @@ class StageView(ctx: Context) : View(ctx) {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (indexing) { indexAt(y); invalidate(); return true }
+                if (carry != null) {
+                    carryMoved = max(carryMoved, hypot(x - downX, y - downY))
+                    carryX = x; carryY = y; invalidate(); return true
+                }
+                // upright and open, sliding a tape sideways towards the deck lifts it straight off the shelf
+                val ds = downSlot
+                if (open && !stacked && ds != null && shelfFrom != null && x - downX > dp(16f) && abs(x - downX) > abs(y - downY) * 1.6f) {
+                    removeCallbacks(pickUp); startCarry(ds, x, y); carryMoved = x - downX; return true
+                }
                 wheelFrom?.let { (y0, v0) -> setVolume((v0 + (y0 - y) / dp(220f)).coerceIn(0f, 1f)); invalidate(); return true }
-                wakeLegends(G, x, y)
+                wakeLegends(C, x, y)
                 wind?.let { (hx, hy, a0) ->
                     val a = atan2(y - hy, x - hx)
                     var da = a - a0
@@ -540,6 +844,9 @@ class StageView(ctx: Context) : View(ctx) {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(pickUp)
+                if (carry != null) { endCarry(G, x, y, e.actionMasked == MotionEvent.ACTION_UP); downSlot = null; return true }
+                downSlot = null
                 if (indexing) { indexing = false; railTouchedAt = SystemClock.uptimeMillis(); invalidate(); return true }
                 if (wheelFrom != null) { wheelFrom = null; invalidate(); return true }
                 if (wind != null) { wind = null; Deck.dragging = false; if (wasPlaying) Deck.press(Deck.Key.PLAY) }

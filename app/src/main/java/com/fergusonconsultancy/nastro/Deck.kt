@@ -58,7 +58,7 @@ object Deck {
     /** The capstan: driven by the motor while the head is in. */
     var capstanAng = 0f; private set
     const val GUIDE_R = 1.4f
-    const val PINCH_R = 2.9f
+    const val PINCH_R = 2.6f
     const val CAPSTAN_R = 0.85f
     var door = 0f; private set
     private var doorTarget = 0f
@@ -113,6 +113,8 @@ object Deck {
     // ---- Tape geometry ----------------------------------------------------------------------
     val sideLetter get() = if (dir > 0) 'A' else 'B'
     private fun sideList(): List<Track> = tape?.let { if (dir > 0) it.a else it.b } ?: emptyList()
+    /** Seconds of music left on the side playing (the blank tail aside): auto reverse wakes as it runs out. */
+    fun musicLeft(): Double = sideList().lastOrNull()?.let { it.start + it.durSecs - sidePos() } ?: 0.0
     private fun sidePos(): Double = (if (dir > 0) x else 1 - x) * (tape?.sideSecs ?: 1.0)
     private fun xFromSidePos(s: Double): Double { val L = tape?.sideSecs ?: 1.0; return if (dir > 0) s / L else 1 - s / L }
     private fun sideEnd(): Double = tape?.let { if (dir > 0) it.aEnd else it.bEnd } ?: 0.0
