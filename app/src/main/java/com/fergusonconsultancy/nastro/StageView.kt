@@ -20,6 +20,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -102,8 +103,60 @@ class StageView(ctx: Context) : View(ctx) {
         }
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); Deck.listen(changed); Prefs.listen(changed); Light.start(context, changed) }
-    override fun onDetachedFromWindow() { Light.stop(); Deck.unlisten(changed); Prefs.unlisten(changed); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow(); Deck.listen(changed); Prefs.listen(changed); Light.start(context, changed)
+        Senses.start(context, { checkTabletop() }, { invalidate() })
+    }
+    override fun onDetachedFromWindow() { Senses.stop(); Light.stop(); Deck.unlisten(changed); Prefs.unlisten(changed); super.onDetachedFromWindow() }
+
+    // ---- the tabletop deck (24 Nov 2026) --------------------------------------------------------
+    // Mechack chose it from the ideas for adaptive controls. Open, on its side, and stood half open on
+    // a table, the phone is a deck: the upper half stands up as the compartment, the lower half lies
+    // flat as the front panel with its readout, switches and a full-width bank of keys. A deck's
+    // compartment is shut behind its window, so the door logic reads it as shut: the tape plays and the
+    // keys work. Laid flat again, the door is open once more and the tape stops, as unfolding does.
+    private var tabletop = false
+    private var panel: PlayerGeom? = null
+
+    private fun checkTabletop() {
+        val a = Senses.hinge
+        val can = open && stacked && a != null
+        // a little hysteresis so the deck doesn't flicker at the edge of the posture
+        val now = can && a!! > 30f && a < if (tabletop) 160f else 145f
+        if (now == tabletop) return
+        tabletop = now
+        if (now) { Sfx.play(Sfx.S.DOOR_SHUT, 0.7f); clunk(); Deck.setOpen(false) }
+        else { if (open) { Sfx.play(Sfx.S.DOOR_OPEN, 0.6f); Deck.setOpen(true) } }
+        layoutAll(); invalidate()
+    }
+
+    // ---- the room's light (24 Nov 2026) -------------------------------------------------------------
+    // Smoothed over a second or so in log terms, so a passing shadow doesn't flicker the keys
+    private var luxLog = Float.NaN
+    private fun roomLight(dt: Float) {
+        val lx = Senses.lux ?: run { live.dark = 0f; live.bright = 0f; return }
+        val target = ln(max(0.5f, lx))
+        luxLog = if (luxLog.isNaN()) target else luxLog + (target - luxLog) * (1 - exp(-dt / 1.2f))
+        // dark below about 40 lux (a dim room), fully lit by 4 (lights out); bright from 1,500 (daylight) to 15,000 (sun)
+        live.dark = ((ln(40f) - luxLog) / (ln(40f) - ln(4f))).coerceIn(0f, 1f)
+        live.bright = ((luxLog - ln(1500f)) / (ln(15000f) - ln(1500f))).coerceIn(0f, 1f)
+    }
+    private val roomSettling get() = Senses.lux?.let { abs(ln(max(0.5f, it)) - luxLog) > 0.02f } ?: false
+
+    // ---- keys that answer to what's going on (24 Nov 2026) ---------------------------------------
+    private var holdNow = 0f; private var inviteNow = 0f; private var endNow = 0f
+    private fun keyState(dt: Float) {
+        holdNow += ((if (Deck.hold) 1f else 0f) - holdNow) * (1 - exp(-dt / 0.12f))
+        // a tape waits, stopped, with the door shut: play invites
+        val waiting = Deck.tape != null && Deck.mode == Deck.Mode.STOP && Deck.door < 0.05f && !Deck.compartmentOpen && !Deck.hold && Deck.pending == null
+        inviteNow += ((if (waiting) 1f else 0f) - inviteNow) * (1 - exp(-dt / 0.6f))
+        // the side's music running out, with auto reverse on: the last 20 seconds
+        val left = Deck.musicLeft()
+        val ending = Deck.autoRev && Deck.mode == Deck.Mode.PLAY && left in 0.0..20.0
+        endNow += ((if (ending) (1 - left / 20.0).toFloat().coerceIn(0.35f, 1f) else 0f) - endNow) * (1 - exp(-dt / 0.4f))
+        live.holdSink = holdNow; live.invite = inviteNow; live.sideEnd = endNow
+    }
+    private val keysSettling get() = abs((if (Deck.hold) 1f else 0f) - holdNow) > 0.004f || inviteNow > 0.01f || endNow > 0.01f || live.dark > 0.01f
 
     /** The screen's own corner radius, so the body's edge follows the glass. */
     private fun screenRadius(): Float {
@@ -159,9 +212,12 @@ class StageView(ctx: Context) : View(ctx) {
             // Folding: the door has shut; the face appears with the clunk of the catch, and it plays
             swing = 1f; view = 0f; viewTarget = 0f
             post { Sfx.play(Sfx.S.DOOR_SHUT, 0.8f); clunk(); Deck.setOpen(false) }
-        } else Deck.setOpen(nowOpen)
+        } else Deck.setOpen(nowOpen && !tabletop)
         open = nowOpen
+        if (!(open && stacked) && tabletop) tabletop = false
         layoutAll()
+        // the posture may already be half open when the phone is turned onto its side
+        checkTabletop()
     }
 
     // Turning straight from one side to the other (90 to 270) keeps the window's size, so no
@@ -263,7 +319,14 @@ class StageView(ctx: Context) : View(ctx) {
             deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
             face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
             shelfBg.set(0f, half, Wf, Hf)
-            shelfArea.set(L + dp(12f), half + dp(6f), L + W - dp(12f), T + H - dp(6f))
+            if (tabletop) {
+                // the lower half is the deck's front panel; there is no shelf to reach
+                panel = PlayerGeom.panel(L + g, half + g, W - g * 2, T + H - half - g * 2, RectF(0f, half, Wf, Hf))
+                shelfArea.set(0f, 0f, 0f, 0f)
+            } else {
+                panel = null
+                shelfArea.set(L + dp(12f), half + dp(6f), L + W - dp(12f), T + H - dp(6f))
+            }
         } else if (open) {
             val half = Wf / 2f
             val g = dp(10f)
@@ -415,7 +478,12 @@ class StageView(ctx: Context) : View(ctx) {
         if (glyphDone || orderNow != orderTarget) orderNow += (orderTarget - orderNow) * (1 - exp(-dt / 0.12f))
         if (abs(orderTarget - orderNow) < 0.003f) orderNow = orderTarget
         live.glyph = glyphNow; live.order = orderNow
-        if (open) {
+        keyState(dt); roomLight(dt)
+        val P = panel
+        if (open && tabletop && P != null) {
+            painter.bay(c, G, live)
+            painter.face(c, P, live)
+        } else if (open) {
             if (swing >= 0.999f) {
                 drawShelf(c)
                 painter.bay(c, G, live)
@@ -462,7 +530,7 @@ class StageView(ctx: Context) : View(ctx) {
         painter.edge(c, fw.toFloat(), fh.toFloat(), screenRadius())
 
         val busy = Deck.animating() || Deck.mode == Deck.Mode.PLAY || swing < 1f || shake > 0 || abs(view - viewTarget) > 0.001f ||
-            !scroller.isFinished || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
+            !scroller.isFinished || keysSettling || roomSettling || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
         if (busy) postInvalidateOnAnimation()
     }
 
@@ -681,24 +749,27 @@ class StageView(ctx: Context) : View(ctx) {
         val x = e.x; val y = e.y
         if (needsPermission) { if (e.action == MotionEvent.ACTION_UP) onAskPermission?.invoke(); return true }
         val G = deck ?: return true
+        // the keys, switches and battery door: on the face, or on the tabletop deck's front panel
+        val C = if (open && tabletop) panel ?: G else G
+        val panelUp = C !== G
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 scroller.forceFinished(true)
-                wakeLegends(G, x, y)
+                wakeLegends(C, x, y)
                 if (!open || swing >= 0.999f) {
                     // touches follow where the keys are going
-                    val row = if (orderTarget > 0.5f && G.keysRev.isNotEmpty()) G.keysRev else G.keys
+                    val row = if (orderTarget > 0.5f && C.keysRev.isNotEmpty()) C.keysRev else C.keys
                     for (K in row) if (K.rect.near(x, y, dp(4f))) {
                         pressed = K.key; pressedAt = SystemClock.uptimeMillis(); pressKey(K.key); invalidate(); return true
                     }
                 }
-                for (T in G.legends) if (x > T.x - dp(6f) && x < T.x + T.w && y > T.y - T.h && y < T.y + T.h * 0.4f) {
+                for (T in C.legends) if (x > T.x - dp(6f) && x < T.x + T.w && y > T.y - T.h && y < T.y + T.h * 0.4f) {
                     if (!Deck.hold) Sfx.play(Sfx.S.STOP, 0.35f)
                     Deck.toggle(T.id); proximity[T.id] = 1f; invalidate(); return true
                 }
-                G.hold?.let { if (it.near(x, y, dp(10f))) { Sfx.play(Sfx.S.WIND_KEY, 0.5f); Deck.toggle("hold"); invalidate(); return true } }
-                G.battery?.let { if (it.near(x, y, dp(4f))) {
-                    if (open) {
+                C.hold?.let { if (it.near(x, y, dp(10f))) { Sfx.play(Sfx.S.WIND_KEY, 0.5f); Deck.toggle("hold"); invalidate(); return true } }
+                (if (panelUp) C.battery else G.battery)?.let { if (it.near(x, y, dp(4f))) {
+                    if (open && !panelUp) {
                         // the AA springs up out of its bay on its coil; the settings are under it
                         cellPopAt = SystemClock.uptimeMillis(); Sfx.play(Sfx.S.WIND_KEY, 0.45f); haptic(HapticFeedbackConstants.CONTEXT_CLICK)
                         postDelayed({ onOpenSettings?.invoke() }, 240)
@@ -754,7 +825,7 @@ class StageView(ctx: Context) : View(ctx) {
                     removeCallbacks(pickUp); startCarry(ds, x, y); carryMoved = x - downX; return true
                 }
                 wheelFrom?.let { (y0, v0) -> setVolume((v0 + (y0 - y) / dp(220f)).coerceIn(0f, 1f)); invalidate(); return true }
-                wakeLegends(G, x, y)
+                wakeLegends(C, x, y)
                 wind?.let { (hx, hy, a0) ->
                     val a = atan2(y - hy, x - hx)
                     var da = a - a0

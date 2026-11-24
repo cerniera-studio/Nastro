@@ -21,6 +21,13 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /** Colour with alpha a (0..1) applied over its own. */
+/** [a] to [b] by [t], channel by channel, alpha included. */
+fun blend(a: Int, b: Int, t: Float): Int {
+    val q = t.coerceIn(0f, 1f)
+    fun ch(sh: Int) = ((((a ushr sh) and 0xFF) * (1 - q) + ((b ushr sh) and 0xFF) * q).toInt() and 0xFF) shl sh
+    return ch(24) or ch(16) or ch(8) or ch(0)
+}
+
 fun Int.a(a: Float): Int {
     val base = (this ushr 24) / 255f
     return (((base * a).coerceIn(0f, 1f) * 255).toInt() shl 24) or (this and 0xFFFFFF)
@@ -125,6 +132,28 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             win = RectF(ln)
             val wr = bleed?.right ?: (x + w)
             wheel = RectF(wr - 0.03f * u, lcd.top, wr + 0.015f * u, lcd.top + 0.36f * u)
+        }
+
+        /**
+         * The tabletop deck (24 Nov 2026): the open phone on its side, stood half open on a table. The
+         * upper half stands up as the compartment; the lower half lies flat as the front panel, as on
+         * a hi-fi deck: the readout and the switches across the top, a full-width bank of keys below.
+         */
+        fun panel(x: Float, y: Float, w: Float, h: Float, bleed: RectF): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
+            this.y = y; this.h = h
+            rot = 0f; radius = 0f
+            body = RectF(bleed)
+            u = min(w * 0.5f, h * 1.2f)
+            val padX = w * 0.045f
+            val lh = h * 0.36f
+            lcd = RectF(x + padX, y + h * 0.05f, x + padX + min(w * 0.52f, lh * 3.6f), y + h * 0.05f + lh)
+            val sw = x + w - padX - (lcd.right + w * 0.06f)
+            val sh = min(lcd.height(), sw * 0.3f)
+            strip(RectF(lcd.right + w * 0.06f, lcd.centerY() - sh / 2, x + w - padX, lcd.centerY() + sh / 2))
+            chan = RectF(x + padX, lcd.bottom + h * 0.07f, x + w - padX, y + h * 0.97f)
+            keys = keyRow(chan)
+            keysRev = keyRow(chan, reversed = true)
+            win = RectF(); k = 1f
         }
 
         private fun PlayerGeom.strip(st: RectF) {
@@ -758,6 +787,17 @@ class Painter(ctx: Context) {
          * fast forward from the top.
          */
         var glyph: Float = 0f, var order: Float = 0f,
+        /**
+         * Keys that answer to what is going on (24 Nov 2026). [holdSink], 0 to 1: Hold sinks the keys
+         * flush and dims them. [invite], 0 to 1: a tape waits, stopped, and play glows faintly, breathing.
+         * [sideEnd], 0 to 1: the side's music is running out and auto reverse wakes.
+         */
+        var holdSink: Float = 0f, var invite: Float = 0f, var sideEnd: Float = 0f,
+        /**
+         * The room's light (24 Nov 2026): [dark], 0 to 1, backlights the keys' symbols like a car's
+         * dashboard at night; [bright], 0 to 1, deepens their engraving in sunlight.
+         */
+        var dark: Float = 0f, var bright: Float = 0f,
     )
 
     /**
@@ -880,6 +920,8 @@ class Painter(ctx: Context) {
     private val LCD_TOP = 0xFFA29B84.toInt()
     private val LCD_BOT = 0xFF8A8370.toInt()
     private val LCD_ON = 0xFF1F1C15.toInt()
+    /** The keys' backlight after dark: warm, as a car's dashboard is at night. */
+    private val GLOW = 0xFFFFC46B.toInt()
     private val LCD_SHADOW = 0x4228241A
 
     private fun lcd(c: Canvas, L: RectF, detail: Float, live: Live) {
@@ -903,6 +945,29 @@ class Painter(ctx: Context) {
         p.shader = LinearGradient(G.left, 0f, G.left + G.width() * 0.06f, 0f, Color.BLACK.a(0.22f), 0, Shader.TileMode.CLAMP); c.drawRect(G, p)
         p.shader = null
 
+        // On its side (24 Nov 2026) the readout turns upright with the keys: as the symbols swivel, the
+        // usual rows fade out and a stacked readout fades in across the strip, read the right way up.
+        val tq = (kotlin.math.abs(live.glyph) / 90f).coerceIn(0f, 1f)
+        if (tq < 0.999f) {
+            if (tq > 0.001f) c.saveLayerAlpha(G, ((1 - tq) * 255).toInt())
+            lcdRows(c, G, detail, live)
+            if (tq > 0.001f) c.restore()
+        }
+        if (tq > 0.001f) {
+            c.saveLayerAlpha(G, (tq * 255).toInt())
+            c.rotate(if (live.glyph > 0) 90f else -90f, G.centerX(), G.centerY())
+            val Q = RectF(G.centerX() - G.height() / 2, G.centerY() - G.width() / 2, G.centerX() + G.height() / 2, G.centerY() + G.width() / 2)
+            lcdStack(c, Q, detail, live)
+            c.restore()
+        }
+        // one highlight across the glass
+        p.shader = LinearGradient(G.left, G.top, G.left + G.width() * 0.5f, G.bottom, intArrayOf(Color.WHITE.a(0.2f), Color.WHITE.a(0.04f), 0), floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(G, p); p.shader = null
+        c.restore()
+    }
+
+    /** The readout's usual rows: icons, then what the deck is doing and the counter, then the title. */
+    private fun lcdRows(c: Canvas, G: RectF, detail: Float, live: Live) {
         // icons along the top: the tape, auto reverse, Mega Bass, battery
         val ih = G.height() * 0.13f; val iy = G.top + G.height() * 0.1f
         val ix = G.left + G.width() * 0.06f; val rx = G.left + G.width() * 0.94f
@@ -946,10 +1011,73 @@ class Painter(ctx: Context) {
             run.substring(step, (step + room).coerceAtMost(run.length))
         } else txt
         seg14text(c, shown, G.left + G.width() * 0.06f, G.top + G.height() * 0.74f, tw, th, room, 0.25f + 0.75f * detail)
-        // one highlight across the glass
-        p.shader = LinearGradient(G.left, G.top, G.left + G.width() * 0.5f, G.bottom, intArrayOf(Color.WHITE.a(0.2f), Color.WHITE.a(0.04f), 0), floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
-        c.drawRect(G, p); p.shader = null
-        c.restore()
+    }
+
+    private fun modeWord(live: Live): String {
+        val m = Deck.mode
+        return when {
+            Deck.door > 0.5f -> "OPEN"
+            Deck.hold && live.pressed != null && live.pressAge < 900 -> "HOLD"
+            m == Deck.Mode.PLAY -> "PLAY"; m == Deck.Mode.FF -> "FF"; m == Deck.Mode.REW -> "REW"; m == Deck.Mode.AMS -> "AMS"
+            else -> "STOP"
+        }
+    }
+
+    /**
+     * The readout stood upright on a strip that is tall and narrow (24 Nov 2026): the tape and battery
+     * icons, then what the deck is doing, then the direction and counter, then the title as a ticker,
+     * a few letters to a line, rising a line at a time like a stock ticker's board.
+     */
+    private fun lcdStack(c: Canvas, Q: RectF, detail: Float, live: Live) {
+        val w = Q.width()
+        // icons: the tape on the left, the battery on the right
+        val ih = w * 0.09f; val iy = Q.top + Q.height() * 0.035f
+        val ix = Q.left + w * 0.08f; val rx = Q.right - w * 0.08f
+        lcdInk(c, 1f) { col ->
+            s.color = col; s.strokeWidth = ih * 0.18f; r.set(ix, iy, ix + ih * 1.7f, iy + ih); c.drawRoundRect(r, ih * 0.25f, ih * 0.25f, s)
+            fill(col); c.drawCircle(ix + ih * 0.55f, iy + ih * 0.5f, ih * 0.18f, p); c.drawCircle(ix + ih * 1.15f, iy + ih * 0.5f, ih * 0.18f, p)
+            s.strokeWidth = ih * 0.16f; c.drawRect(rx - ih * 1.9f, iy, rx - ih * 0.2f, iy + ih, s)
+            c.drawRect(rx - ih * 0.2f, iy + ih * 0.3f, rx, iy + ih * 0.7f, p); c.drawRect(rx - ih * 1.75f, iy + ih * 0.18f, rx - ih * 0.75f, iy + ih * 0.82f, p)
+        }
+        if (Deck.autoRev || Deck.megaBass) lcdInk(c, 1f) { col ->
+            print(c, listOfNotNull(if (Deck.megaBass) "MB" else null, if (Deck.autoRev) "AR" else null).joinToString(" "),
+                Q.centerX(), iy + ih * 0.98f, ih * 1.1f, col, true, Paint.Align.CENTER)
+        }
+        // what the deck is doing, as large as four letters allow
+        val cw = w * 0.84f / (4 * 1.32f); val ch = cw / 0.6f
+        var y = iy + ih * 1.9f
+        seg14text(c, modeWord(live), Q.left + w * 0.08f, y, cw, ch, 4, 1f)
+        y += ch * 1.35f
+        // the direction, then the counter
+        val cw2 = cw * 0.8f; val ch2 = cw2 / 0.6f
+        seg14text(c, if (Deck.dir > 0) "F" else "R", Q.left + w * 0.08f, y, cw2, ch2, 1, 1f)
+        seg14text(c, Deck.counter().toString().padStart(3, '0'), Q.right - w * 0.08f - cw2 * 1.32f * 3 + cw2 * 0.32f, y, cw2, ch2, 3, 1f)
+        y += ch2 * 1.5f
+        // the title, a line at a time
+        val cur = Deck.current()
+        val txt = if (live.volAge < 1300) "VOL " + "-".repeat((live.volume * 10).toInt().coerceIn(0, 10))
+            else ((cur.track?.number ?: 0).toString().padStart(2, '0') + " " + (cur.track?.title ?: "")).uppercase()
+        val tw = w * 0.84f / (6 * 1.32f); val th = tw / 0.6f
+        val lines = tickerLines(txt, 6)
+        val fit = ((Q.bottom - w * 0.06f - y) / (th * 1.45f)).toInt().coerceAtLeast(1)
+        val shown = if (lines.size <= fit) lines else {
+            val run = lines + listOf("") + lines
+            val step = ((android.os.SystemClock.uptimeMillis() / 1100) % (lines.size + 1)).toInt()
+            run.subList(step, step + fit)
+        }
+        for (ln in shown) { seg14text(c, ln, Q.left + w * 0.08f, y, tw, th, 6, 0.25f + 0.75f * detail); y += th * 1.45f }
+    }
+
+    /** Words broken into lines of [n] characters, long words cut. */
+    private fun tickerLines(t: String, n: Int): List<String> {
+        val out = ArrayList<String>(); var cur = ""
+        for (word in t.split(' ').filter { it.isNotEmpty() }) {
+            var wd = word
+            while (wd.length > n) { if (cur.isNotEmpty()) { out += cur; cur = "" }; out += wd.take(n); wd = wd.drop(n) }
+            cur = if (cur.isEmpty()) wd else if (cur.length + 1 + wd.length <= n) "$cur $wd" else { out += cur; wd }
+        }
+        if (cur.isNotEmpty()) out += cur
+        return out
     }
 
     /** LCD ink: draw twice, first as the segments' shadow on the reflector, then the segments. */
@@ -1028,7 +1156,7 @@ class Painter(ctx: Context) {
             val Kb = G.keysRev.firstOrNull { it.key == K0.key } ?: Ka
             val o = live.order
             val K = K0
-            val d = max(if (latched(K.key)) 0.55f else 0f, if (live.pressed == K.key) max(0f, 1 - live.pressAge / 170f) else 0f)
+            val d = max(max(if (latched(K.key)) 0.55f else 0f, if (live.pressed == K.key) max(0f, 1 - live.pressAge / 170f) else 0f), live.holdSink * 0.9f)
             val cx = Ka.cx + (Kb.cx - Ka.cx) * o; val cy = Ka.cy + (Kb.cy - Ka.cy) * o
             val R = Ka.r + (Kb.r - Ka.r) * o
             // Sunk into the body, as on the WM-EX610: a deep round hole whose upper lip is in shadow
@@ -1071,6 +1199,8 @@ class Painter(ctx: Context) {
             s.strokeCap = Paint.Cap.BUTT
             // the edge where the dome turns away
             s.strokeWidth = dp(0.6f); s.color = Color.BLACK.a(0.28f); c.drawCircle(0f, 0f, R - dp(0.3f), s)
+            // Hold: the caps sink flush and go dim, a lock you can see
+            if (live.holdSink > 0.01f) { fill(Color.BLACK.a(0.34f * live.holdSink)); c.drawCircle(0f, 0f, R, p) }
             // engraved symbol
             val q = fr * 0.34f
             path.reset()
@@ -1082,8 +1212,19 @@ class Painter(ctx: Context) {
             }
             // the symbol turns to read upright however the phone is held
             c.save(); c.rotate(live.glyph)
-            c.save(); c.translate(0f, dp(0.5f)); fill(Color.WHITE.a(0.5f)); c.drawPath(path, p); c.restore()
-            fill(F.sym); c.drawPath(path, p)
+            // in sunlight the engraving reads deeper: its lit edge brighter, the cut darker
+            val br = live.bright
+            c.save(); c.translate(0f, dp(0.5f) * (1 + br * 0.6f)); fill(Color.WHITE.a(0.5f + 0.3f * br)); c.drawPath(path, p); c.restore()
+            val symCol = blend(F.sym, F.sym or 0xFF000000.toInt(), br)
+            // after dark the symbol is lit from behind, a dashboard's warm glow; a waiting tape's play
+            // key glows faintly, breathing, as if it were ready
+            val breath = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 2400.0 * 2 * PI).toFloat()
+            val inv = if (K.key == Deck.Key.PLAY) live.invite * (0.35f + 0.65f * breath) else 0f
+            val glow = max(live.dark * (1 - live.holdSink * 0.7f), inv)
+            if (glow > 0.01f) {
+                p.setShadowLayer(R * 0.22f, 0f, 0f, GLOW.a(0.85f * glow))
+                fill(blend(symCol, GLOW, 0.9f * glow)); c.drawPath(path, p); p.clearShadowLayer()
+            } else { fill(symCol); c.drawPath(path, p) }
             c.restore()
             c.restore()
         }
@@ -1142,7 +1283,8 @@ class Painter(ctx: Context) {
         lcd(c, G.lcd, detail, live)
 
         // the lid: the door you open by unfolding, brushed the other way, with a seam
-        val Ld = G.lid ?: return
+        // (the tabletop deck's front panel has none: its tape stands in the upper half)
+        val Ld = G.lid ?: run { keys(c, G, F, live); strip(c, G, F, detail, live); return }
         val lr = min(Ld.width(), Ld.height()) * 0.079f
         fill(F.lid[1]); p.setShadowLayer(dp(3f), 0f, dp(1f), 0x47000000); c.drawRoundRect(Ld, lr, lr, p); p.clearShadowLayer()
         metal(c, Ld, lr, intArrayOf(F.lid[0], F.lid[1], if (F.lacquer || F.aniso) F.stops[2] else F.stops[1]), true, F.lacquer, F.aniso)
@@ -1235,11 +1377,18 @@ class Painter(ctx: Context) {
         for (T in G.legends) {
             val onT = if (T.id == "megaBass") Deck.megaBass else Deck.autoRev
             val prox = live.proximity[T.id] ?: 0f
-            val a = (0.62f + 0.38f * max(prox, if (onT) 1f else 0f)) * max(0.2f, detail)
+            val wakeEnd = if (T.id == "autoRev") live.sideEnd else 0f
+            val a = (0.62f + 0.38f * max(max(prox, wakeEnd), if (onT) 1f else 0f)) * max(0.2f, detail)
             c.saveLayerAlpha(T.x, T.y - fs * 1.4f, T.x + T.w + fs * 6, T.y + fs * 0.6f, (a * 255).toInt())
             engrave(c, T.text, T.x + fs * 1.1f, T.y, fs, F, Paint.Align.LEFT, 0.2f)
             c.restore()
-            fill(if (onT) 0xFFFFAD33.toInt() else 0x661E2837); c.drawCircle(T.x + fs * 0.35f, T.y - fs * 0.32f, max(dp(2f), fs * 0.24f), p)
+            val dr = max(dp(2f), fs * 0.24f)
+            if (wakeEnd > 0.01f) {
+                // the side is running out: auto reverse's lamp pulses, ready to turn the tape
+                val pulse = 0.5f + 0.5f * sin(android.os.SystemClock.uptimeMillis() / 700.0 * 2 * PI).toFloat()
+                p.setShadowLayer(dr * 2.2f, 0f, 0f, 0xFFFFAD33.toInt().a(wakeEnd * pulse))
+            }
+            fill(if (onT) 0xFFFFAD33.toInt() else 0x661E2837); c.drawCircle(T.x + fs * 0.35f, T.y - fs * 0.32f, dr, p); p.clearShadowLayer()
         }
         // the battery door: the settings live behind it
         val B = G.battery ?: return

@@ -113,6 +113,8 @@ object Deck {
     // ---- Tape geometry ----------------------------------------------------------------------
     val sideLetter get() = if (dir > 0) 'A' else 'B'
     private fun sideList(): List<Track> = tape?.let { if (dir > 0) it.a else it.b } ?: emptyList()
+    /** Seconds of music left on the side playing (the blank tail aside): auto reverse wakes as it runs out. */
+    fun musicLeft(): Double = sideList().lastOrNull()?.let { it.start + it.durSecs - sidePos() } ?: 0.0
     private fun sidePos(): Double = (if (dir > 0) x else 1 - x) * (tape?.sideSecs ?: 1.0)
     private fun xFromSidePos(s: Double): Double { val L = tape?.sideSecs ?: 1.0; return if (dir > 0) s / L else 1 - s / L }
     private fun sideEnd(): Double = tape?.let { if (dir > 0) it.aEnd else it.bEnd } ?: 0.0
