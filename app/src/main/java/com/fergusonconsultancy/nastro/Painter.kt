@@ -88,7 +88,15 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     companion object {
         const val CW = 100.4f
         const val CH = 63.8f
-        private const val REEL_Y = -2f
+        /**
+         * The face's window (27 Nov 2026), in the cassette's millimetres: across its height and along
+         * its length. It shows the whole face of the shell but a few millimetres at the edges, the label
+         * included; on a screen without room for that it shrinks to the MIN sizes before the tape does.
+         */
+        const val WIN_ACROSS = 56f
+        const val WIN_ALONG = 92f
+        const val WIN_MIN_ACROSS = 52f
+        const val WIN_MIN_ALONG = 74f
 
         /**
          * [x], [y], [w], [h] is the safe area for the parts (clear of the camera and system bars);
@@ -108,14 +116,14 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             radius = if (bleed != null) 0f else h * 0.12f
             body = bleed?.let { RectF(it) } ?: RectF(x, y, x + w, y + h)
             val pad = h * 0.05f
-            // the column's stack is 0.8 of its width tall: readout, keys, switches
-            u = minOf(w * 0.4f, (h - pad * 2) / 0.86f)
+            // 27 Nov 2026: no readout. The column's stack is the keys and the switches, half its width tall
+            u = minOf(w * 0.4f, (h - pad * 2) / 0.6f)
             val colR = x + w - pad - 0.035f * u
             val colL = colR - u
-            val stackH = u * 0.8f
+            val stackH = u * 0.52f
             val top = y + (h - stackH) / 2
-            lcd = RectF(colL, top, colR, top + 0.25f * u)
-            chan = RectF(colL - 0.015f * u, lcd.bottom + 0.06f * u, colR + 0.015f * u, lcd.bottom + 0.28f * u)
+            lcd = RectF()
+            chan = RectF(colL - 0.015f * u, top, colR + 0.015f * u, top + 0.22f * u)
             keys = keyRow(chan)
             val st = RectF(colL, chan.bottom + 0.05f * u, colR, chan.bottom + 0.25f * u)
             strip(st)
@@ -124,14 +132,19 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val maxW = ld.height() * 2.3f
             if (ld.width() > maxW) { val cx = ld.centerX(); ld.left = cx - maxW / 2; ld.right = cx + maxW / 2 }
             lid = ld
-            k = minOf(ld.width() * 0.8f / 74f, ld.height() * 0.62f / 30f).let { if (mm > 0f) min(it, mm) else it }
-            val lcx = ld.centerX(); val lcy = ld.top + ld.height() * 0.45f
-            val ln = RectF(lcx - 37 * k, lcy - 15 * k, lcx + 37 * k, lcy + 15 * k)
+            // the window onto the whole cassette, lying flat, clear of AUTO REVERSE above and the wordmark below
+            val topBand = ld.height() * 0.075f + 0.03f * u
+            val botBand = ld.height() * 0.075f + 0.115f * u
+            val roomW = ld.width() * 0.92f; val roomH = ld.height() - topBand - botBand
+            k = min(roomW / WIN_MIN_ALONG, roomH / WIN_MIN_ACROSS).let { if (mm > 0f) min(it, mm) else it }
+            val along = min(WIN_ALONG, roomW / k); val across = min(WIN_ACROSS, roomH / k)
+            val lcx = ld.centerX(); val lcy = ld.top + topBand + roomH / 2
+            val ln = RectF(lcx - along / 2 * k, lcy - across / 2 * k, lcx + along / 2 * k, lcy + across / 2 * k)
             lens = ln
-            tx = lcx; ty = lcy - REEL_Y * k
+            tx = lcx; ty = lcy
             win = RectF(ln)
             val wr = bleed?.right ?: (x + w)
-            wheel = RectF(wr - 0.03f * u, lcd.top, wr + 0.015f * u, lcd.top + 0.36f * u)
+            wheel = RectF(wr - 0.03f * u, chan.top, wr + 0.015f * u, chan.top + 0.36f * u)
         }
 
         /**
@@ -167,35 +180,41 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
 
         private fun faceTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, anchor: Pair<Float, Float>? = null): PlayerGeom {
             // Too squat for the whole face at this width (a split window): narrow it, centred, so nothing falls off the foot
-            if (h < 1.7f * w) { val w2 = h / 1.7f; return faceTallFit(x + (w - w2) / 2, y, w2, h, bleed, mm) }
+            if (h < 1.45f * w) { val w2 = h / 1.45f; return faceTallFit(x + (w - w2) / 2, y, w2, h, bleed, mm) }
             return faceTallFit(x, y, w, h, bleed, mm, anchor)
         }
 
         private fun faceTallFit(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, anchor: Pair<Float, Float>? = null): PlayerGeom = PlayerGeom(Kind.FACE, x, w).apply {
-            // 14 Nov 2026: the controls give up a little height so the lid, and the tape behind its lens, can
-            // grow to the real thing's size: the hubs 42.5 mm apart, as in your hand
-            // 14 Nov 2026, Mechack: the readout up, the keys and switches down, the space between to the lid
-            val lidH = (h - 0.75f * w).coerceIn(0.8f * w, if (bleed != null) 2.3f * w else 1.5f * w)
-            this.h = 0.75f * w + lidH
+            // 27 Nov 2026, Mechack: the readout said again what the now-playing notification already
+            // says, and it came from the WM-EX610's remote, not its body. It has gone; the lid takes the
+            // whole height above the keys, and its window opens onto the whole cassette at its real size,
+            // label and all, the same tape at the same size as the open compartment shows.
+            val lidH = (h - 0.51f * w).coerceIn(0.8f * w, if (bleed != null) 2.6f * w else 1.7f * w)
+            this.h = 0.51f * w + lidH
             this.y = y + (h - this.h) / 2
             radius = if (bleed != null) 0f else w * 0.12f
             body = bleed?.let { RectF(it) } ?: RectF(x, this.y, x + w, this.y + this.h)
-            lcd = RectF(x + 0.07f * w, this.y + 0.015f * w, x + 0.93f * w, this.y + 0.225f * w)
-            val ld = RectF(x + 0.045f * w, lcd.bottom + 0.045f * w, x + 0.955f * w, lcd.bottom + 0.045f * w + lidH)
+            lcd = RectF()
+            val ld = RectF(x + 0.045f * w, this.y + 0.03f * w, x + 0.955f * w, this.y + 0.03f * w + lidH)
             lid = ld
-            k = min(ld.height() * 0.74f / 74f, ld.width() * 0.62f / 30f).let { if (mm > 0f) min(it, mm) else it }
-            var lcx = ld.centerX(); var lcy = ld.top + ld.height() * 0.455f
-            // 14 Nov 2026, Mechack: the tape behind the lens must line up with the tape in the open
+            // the window keeps clear of AUTO REVERSE above it and the wordmark below
+            val topBand = ld.height() * 0.06f + 0.03f * w
+            val botBand = ld.height() * 0.075f + 0.115f * w
+            val roomW = ld.width() * 0.92f; val roomH = ld.height() - topBand - botBand
+            k = min(roomW / WIN_MIN_ACROSS, roomH / WIN_MIN_ALONG).let { if (mm > 0f) min(it, mm) else it }
+            val across = min(WIN_ACROSS, roomW / k); val along = min(WIN_ALONG, roomH / k)
+            var lcx = ld.centerX(); var lcy = ld.top + topBand + roomH / 2
+            // 14 Nov 2026, Mechack: the tape behind the window must line up with the tape in the open
             // compartment. Folded, the door lies over the compartment, the hinge on the left, so the tape is
-            // on the same spot: as far from the hinge edge and from the top as it is unfolded. The lens
+            // on the same spot: as far from the hinge edge and from the top as it is unfolded. The window
             // follows it, kept on the lid and clear of the engraving.
             if (anchor != null && bleed != null) {
-                lcx = (bleed.left + anchor.first - REEL_Y * k).coerceIn(ld.left + 15 * k + 0.04f * w, ld.right - 15 * k - 0.04f * w)
-                lcy = (bleed.top + anchor.second).coerceIn(ld.top + 37 * k + ld.height() * 0.075f, ld.bottom - 37 * k - ld.height() * 0.14f)
+                lcx = clampSafe(bleed.left + anchor.first, ld.left + across / 2 * k + 0.02f * w, ld.right - across / 2 * k - 0.02f * w)
+                lcy = clampSafe(bleed.top + anchor.second, ld.top + topBand + along / 2 * k, ld.bottom - botBand - along / 2 * k)
             }
-            val ln = RectF(lcx - 15 * k, lcy - 37 * k, lcx + 15 * k, lcy + 37 * k)
+            val ln = RectF(lcx - across / 2 * k, lcy - along / 2 * k, lcx + across / 2 * k, lcy + along / 2 * k)
             lens = ln
-            tx = lcx + REEL_Y * k; ty = lcy
+            tx = lcx; ty = lcy
             win = RectF(ln)
             chan = RectF(x + 0.055f * w, ld.bottom + 0.05f * w, x + 0.945f * w, ld.bottom + 0.24f * w)
             keys = keyRow(chan)
@@ -206,6 +225,9 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val wr = bleed?.right ?: (x + w)
             wheel = RectF(wr - 0.03f * w, ld.top + ld.height() * 0.08f, wr + 0.015f * w, ld.top + ld.height() * 0.08f + 0.36f * w)
         }
+
+        /** [v] held between [lo] and [hi]; the middle of the two when there is no room between them. */
+        private fun clampSafe(v: Float, lo: Float, hi: Float) = if (lo <= hi) v.coerceIn(lo, hi) else (lo + hi) / 2
 
         /**
          * The open body (13 Nov 2026, back to the Walkman): the face is the door, so its readout and
@@ -798,6 +820,8 @@ class Painter(ctx: Context) {
          * dashboard at night; [bright], 0 to 1, deepens their engraving in sunlight.
          */
         var dark: Float = 0f, var bright: Float = 0f,
+        /** The J-card over the window while it is held (27 Nov 2026): 0 away, 1 over the glass. */
+        var jcard: Float = 0f,
     )
 
     /**
@@ -1299,7 +1323,8 @@ class Painter(ctx: Context) {
         bevel(c, body, R)
         G.wheel?.let { fill(Color.BLACK.a(0.35f)); r.set(it.left - dp(0.6f), it.top - dp(1.2f), it.left + it.width() * 0.5f, it.bottom + dp(1.2f)); c.drawRoundRect(r, dp(2f), dp(2f), p) }
 
-        lcd(c, G.lcd, detail, live)
+        // the tabletop deck's front panel keeps its readout; the face has none (27 Nov 2026)
+        if (!G.lcd.isEmpty) lcd(c, G.lcd, detail, live)
 
         // the lid: the door you open by unfolding, brushed the other way, with a seam
         // (the tabletop deck's front panel has none: its tape stands in the upper half)
@@ -1318,7 +1343,7 @@ class Painter(ctx: Context) {
         // the seam's lit edge; on lacquer, a champagne coachline
         s.strokeWidth = dp(0.6f); s.color = if (F.coach) 0x8CD9BB86.toInt() else Color.WHITE.a(0.5f); r.set(Ld.left + dp(0.4f), Ld.top + dp(0.4f), Ld.right - dp(0.4f), Ld.bottom - dp(0.4f)); c.drawRoundRect(r, lr, lr, s)
 
-        lens(c, G, detail, live.lifting)
+        lens(c, G, detail, live.lifting, live.jcard, live.glyph)
 
         val fs = max(dp(9f), G.u * 0.034f)
         engrave(c, "AUTO REVERSE", Ld.right - Ld.width() * 0.07f, Ld.top + Ld.height() * (if (G.wide) 0.075f else 0.06f), fs, F, Paint.Align.RIGHT, 0.2f)
@@ -1329,13 +1354,14 @@ class Painter(ctx: Context) {
         strip(c, G, F, detail, live)
     }
 
-    private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean) {
+    private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean, jcard: Float = 0f, glyph: Float = 0f) {
         val L = G.lens ?: return
-        val rad = min(L.width(), L.height()) / 2
+        // 27 Nov 2026: a window onto the whole shell, its corners rounded as a Walkman's window is
+        val rad = min(min(L.width(), L.height()) / 2, 5.5f * G.k)
         r.set(L.left - dp(2f), L.top - dp(2f), L.right + dp(2f), L.bottom + dp(2f))
         p.shader = LinearGradient(L.left, L.top, L.right, L.bottom, intArrayOf(0xFFF4F6F8.toInt(), 0xFF8B939C.toInt(), 0xFFD9DEE3.toInt()), null, Shader.TileMode.CLAMP)
         c.drawRoundRect(r, rad + dp(2f), rad + dp(2f), p); p.shader = null
-        // 14 Nov 2026, Mechack: one tape, seen two ways. Behind the lens is the open compartment exactly as
+        // 14 Nov 2026, Mechack: one tape, seen two ways. Behind the window is the open compartment exactly as
         // unfolding shows it: the same floor, the tape on the same spindles, through clear glass
         p.shader = LinearGradient(L.left, L.top, L.right, L.bottom, 0xFF3A424B.toInt(), 0xFF1D2329.toInt(), Shader.TileMode.CLAMP)
         c.drawRoundRect(L, rad, rad, p); p.shader = null
@@ -1349,6 +1375,18 @@ class Painter(ctx: Context) {
             turn = G.rot; cassette(c, tape, true, detail, facing, spindle = true, shadow = 5f); turn = 0f
             c.restore()
         }
+        // held, the J-card slides up over the tape, inside the glass
+        if (tape != null && jcard > 0.001f) {
+            // folded and on its side the face turns with the phone, but the card is read: it turns to stand upright
+            val up = if (glyph > 45f) 90f else if (glyph < -45f) -90f else 0f
+            if (up == 0f) jCard(c, L, tape, jcard)
+            else {
+                c.save(); c.rotate(up, L.centerX(), L.centerY())
+                val hw = L.height() / 2; val hh = L.width() / 2
+                jCard(c, RectF(L.centerX() - hw, L.centerY() - hh, L.centerX() + hw, L.centerY() + hh), tape, jcard)
+                c.restore()
+            }
+        }
         fill(0x1A101822); c.drawRect(L, p)
         // the glass's glare slides as the phone tilts
         val gd = (if (G.wide) Light.y else Light.x) * 0.2f
@@ -1358,6 +1396,96 @@ class Painter(ctx: Context) {
         p.shader = RadialGradient(L.centerX(), L.centerY(), max(L.width(), L.height()) * 0.6f, intArrayOf(0, Color.BLACK.a(0.22f)), floatArrayOf(0.3f, 1f), Shader.TileMode.CLAMP); c.drawRect(L, p)
         p.shader = null
         c.restore()
+    }
+
+    // ---- the J-card (27 Nov 2026) -----------------------------------------------------------------
+    // Mechack: what's playing, without the readout. The window shows the tape's own label; hold the
+    // window and the J-card slides up over the glass, the side's tracks written out in biro as anyone
+    // dubbing a tape wrote them, a pencil tick by the one playing. Let go and it slides away.
+    private val CARD = 0xFFF3EEE2.toInt()
+    private val PENCIL = 0xFF5B5E63.toInt()
+
+    private fun jCard(c: Canvas, L: RectF, tape: Tape, prog: Float) {
+        val e = prog * prog * (3 - 2 * prog)
+        val inset = L.width() * 0.035f
+        val cardR = RectF(L.left + inset, L.top + inset, L.right - inset, L.bottom - inset)
+        val dy = (1 - e) * (cardR.height() + inset * 2)
+        c.save(); c.translate(0f, dy)
+        // the card, a soft shadow above its leading edge
+        fill(CARD); p.setShadowLayer(dp(8f), 0f, -dp(2f), Color.BLACK.a(0.45f))
+        val cr = dp(3f)
+        c.drawRoundRect(cardR, cr, cr, p); p.clearShadowLayer()
+        // its spine across the top, in the album's colour; the cover in its corner when there is one
+        val spineH = cardR.height() * 0.13f
+        val spine = RectF(cardR.left, cardR.top, cardR.right, cardR.top + spineH)
+        c.save(); path.reset(); path.addRoundRect(cardR, cr, cr, Path.Direction.CW); c.clipPath(path)
+        fill(tape.card); c.drawRect(spine, p)
+        val art = tape.art
+        if (art != null && !tape.mix) {
+            val a = spineH - dp(6f)
+            r.set(spine.right - dp(3f) - a, spine.top + dp(3f), spine.right - dp(3f), spine.top + dp(3f) + a)
+            c.drawBitmap(art, null, r, p)
+        }
+        // the fold line under the spine
+        fill(Color.BLACK.a(0.12f)); c.drawRect(cardR.left, spine.bottom, cardR.right, spine.bottom + dp(1f), p)
+        c.restore()
+        val padX = cardR.width() * 0.07f
+        val textR = spine.right - padX - (if (art != null && !tape.mix) spineH else 0f)
+        // the album, or the mixtape's name, written along the spine
+        val head = if (tape.mix) tape.album else tape.label
+        fitWrite(c, head, spine.left + padX, spine.bottom - spineH * 0.3f, spineH * 0.5f, textR - spine.left - padX, Color.WHITE)
+
+        val now = Deck.current()
+        val side = Deck.sideLetter
+        val tracks = if (side == 'A') tape.a else tape.b
+        val top = spine.bottom + cardR.height() * 0.035f
+        // SIDE A, printed, then the tracks; the size shrinks for a long side but never below easy reading
+        val sideH = dp(13f)
+        print(c, "SIDE $side", cardR.left + padX, top + sideH, sideH, Color.BLACK.a(0.55f), true, Paint.Align.LEFT, sideH * 0.3f)
+        s.strokeWidth = dp(0.7f); s.color = Color.BLACK.a(0.14f)
+        val listTop = top + sideH * 1.7f
+        val avail = cardR.bottom - cardR.height() * 0.03f - listTop
+        val n = max(1, tracks.size)
+        var lineH = min(dp(30f), avail / n)
+        val minLine = dp(17f)
+        var shown = tracks.size
+        if (lineH < minLine) { lineH = minLine; shown = max(1, (avail / lineH).toInt()) }
+        // with more tracks than lines, the list starts so the one playing is in view
+        val first = if (shown < tracks.size) (now.index - shown / 3).coerceIn(0, tracks.size - shown) else 0
+        val numX = cardR.left + padX + lineH * 0.55f
+        for (i in first until first + shown) {
+            val tr = tracks.getOrNull(i) ?: break
+            val base = listTop + (i - first + 0.78f) * lineH
+            c.drawLine(cardR.left + padX, base + lineH * 0.16f, cardR.right - padX, base + lineH * 0.16f, s)
+            val playing = i == now.index && tracks.isNotEmpty()
+            if (playing) tick(c, cardR.left + padX * 0.55f, base - lineH * 0.22f, lineH * 0.42f)
+            handwrite(c, "${i + 1}.", numX, base, lineH * 0.72f, lineH * 1.2f, INK.a(if (playing) 1f else 0.8f), Paint.Align.RIGHT)
+            fitWrite(c, tr.title, numX + lineH * 0.25f, base, lineH * 0.72f, cardR.right - padX - (numX + lineH * 0.25f), INK.a(if (playing) 1f else 0.8f))
+        }
+        c.restore()
+    }
+
+    /** A pencil tick, its foot at ([x], [y]) roughly, [size] tall. */
+    private fun tick(c: Canvas, x: Float, y: Float, size: Float) {
+        path.reset()
+        path.moveTo(x - size * 0.45f, y + size * 0.05f)
+        path.quadTo(x - size * 0.25f, y + size * 0.25f, x - size * 0.1f, y + size * 0.5f)
+        path.quadTo(x + size * 0.15f, y - size * 0.1f, x + size * 0.6f, y - size * 0.55f)
+        s.strokeWidth = max(dp(1.4f), size * 0.13f); s.color = PENCIL; s.strokeCap = Paint.Cap.ROUND; s.strokeJoin = Paint.Join.ROUND
+        c.drawPath(path, s)
+        s.strokeCap = Paint.Cap.BUTT; s.strokeJoin = Paint.Join.MITER
+        s.strokeWidth = dp(0.7f); s.color = Color.BLACK.a(0.14f)
+    }
+
+    /** Handwriting held to [maxW]: squeezed a little if need be, then cut short, never crushed. */
+    private fun fitWrite(c: Canvas, text: String, x: Float, y: Float, size: Float, maxW: Float, color: Int) {
+        t.typeface = hand; t.textSize = size; t.letterSpacing = 0f
+        var str = text
+        if (t.measureText(str) > maxW * 1.25f) {
+            while (str.length > 1 && t.measureText("$str…") > maxW * 1.25f) str = str.dropLast(1)
+            str = str.trimEnd() + "…"
+        }
+        handwrite(c, str, x, y, size, maxW, color)
     }
 
     /** A knurled wheel standing proud of the body edge; its ribs move with the volume. */

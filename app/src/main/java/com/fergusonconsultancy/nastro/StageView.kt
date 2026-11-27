@@ -479,6 +479,12 @@ class StageView(ctx: Context) : View(ctx) {
         if (abs(orderTarget - orderNow) < 0.003f) orderNow = orderTarget
         live.glyph = glyphNow; live.order = orderNow
         keyState(dt); roomLight(dt)
+        // the J-card: up briskly, away a touch slower; folding or opening puts it away
+        if (open || view > 0.5f) cardShown = false
+        val cardTarget = if (cardShown) 1f else 0f
+        cardNow += (cardTarget - cardNow) * (1 - exp(-dt / if (cardShown) 0.07f else 0.09f))
+        if (abs(cardTarget - cardNow) < 0.002f) cardNow = cardTarget
+        live.jcard = cardNow
         val P = panel
         if (open && tabletop && P != null) {
             painter.bay(c, G, live)
@@ -530,7 +536,7 @@ class StageView(ctx: Context) : View(ctx) {
         painter.edge(c, fw.toFloat(), fh.toFloat(), screenRadius())
 
         val busy = Deck.animating() || Deck.mode == Deck.Mode.PLAY || swing < 1f || shake > 0 || abs(view - viewTarget) > 0.001f ||
-            !scroller.isFinished || keysSettling || roomSettling || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null
+            !scroller.isFinished || keysSettling || roomSettling || glyphNow != glyphTarget || orderNow != orderTarget || railWake > 0.01f || lean.any { abs(it) > 0.05f } || proximity.values.any { it > 0.02f } || (pressed != null && now - pressedAt < 200) || live.cellPop > 0f || carry != null || homeSlot != null || cardNow != (if (cardShown) 1f else 0f)
         if (busy) postInvalidateOnAnimation()
     }
 
@@ -620,6 +626,32 @@ class StageView(ctx: Context) : View(ctx) {
     private var vt: VelocityTracker? = null
     private var wasPlaying = false
     private var wheelFrom: Pair<Float, Float>? = null           // y, volume
+
+    // ---- the J-card (27 Nov 2026) -------------------------------------------------------------------
+    // Folded, hold the window still and the J-card slides up over the glass, the side's tracks on it
+    // and a tick by the one playing; let go and it slides away. A finger that moves instead winds the
+    // reel it is on, or turns the tape over, as before.
+    private var cardShown = false
+    private var cardNow = 0f
+    /** A finger down on a hub, not yet moved enough to be winding: hub x, y, the angle it came down at, which reel. */
+    private var hubDown: FloatArray? = null
+    private var hubLeft = true
+    private var winX = 0f; private var winY = 0f
+    private val showCard = Runnable {
+        if (!open && view < 0.5f && Deck.tape != null && wind == null) {
+            cardShown = true; hubDown = null; swipeFrom = null
+            haptic(HapticFeedbackConstants.LONG_PRESS); Sfx.play(Sfx.S.WIND_KEY, 0.25f)
+            parent?.requestDisallowInterceptTouchEvent(true)
+            invalidate()
+        }
+    }
+
+    private fun startWind(hx: Float, hy: Float, a0: Float, left: Boolean) {
+        removeCallbacks(showCard)
+        wind = Triple(hx, hy, a0); windLeft = left
+        wasPlaying = Deck.mode == Deck.Mode.PLAY
+        Deck.stop(); Deck.dragging = true; parent?.requestDisallowInterceptTouchEvent(true)
+    }
 
     private fun hub(G: PlayerGeom, left: Boolean): Pair<Float, Float> {
         // the hub's centre in the shell's millimetres, turned onto the screen as the tape is drawn
@@ -780,12 +812,16 @@ class StageView(ctx: Context) : View(ctx) {
                 G.wheel?.let { if (it.near(x, y, dp(16f))) { wheelFrom = y to volume(); parent?.requestDisallowInterceptTouchEvent(true); return true } }
                 val inWin = x > G.win.left && x < G.win.right && y > G.win.top && y < G.win.bottom
                 if (inWin && Deck.door < 0.05f && Deck.pending == null && (open || view < 0.5f)) {
+                    winX = x; winY = y
+                    // folded, holding the window still brings up the J-card
+                    if (!open) postDelayed(showCard, 320)
                     for (left in listOf(true, false)) {
                         val (hx, hy) = hub(G, left)
                         if (hypot(x - hx, y - hy) < Deck.PACK_R * G.k * 1.05f && !Deck.hold) {
-                            wind = Triple(hx, hy, atan2(y - hy, x - hx)); windLeft = left
-                            wasPlaying = Deck.mode == Deck.Mode.PLAY
-                            Deck.stop(); Deck.dragging = true; parent?.requestDisallowInterceptTouchEvent(true)
+                            // open, there is no card: the reel is caught at once, as before
+                            if (open) { startWind(hx, hy, atan2(y - hy, x - hx), left); return true }
+                            hubDown = floatArrayOf(hx, hy, atan2(y - hy, x - hx)); hubLeft = left
+                            parent?.requestDisallowInterceptTouchEvent(true)
                             return true
                         }
                     }
@@ -825,6 +861,12 @@ class StageView(ctx: Context) : View(ctx) {
                     removeCallbacks(pickUp); startCarry(ds, x, y); carryMoved = x - downX; return true
                 }
                 wheelFrom?.let { (y0, v0) -> setVolume((v0 + (y0 - y) / dp(220f)).coerceIn(0f, 1f)); invalidate(); return true }
+                if (cardShown) return true
+                if (hypot(x - winX, y - winY) > dp(8f)) {
+                    removeCallbacks(showCard)
+                    // the finger has moved on a hub: it winds that reel, from where it came down
+                    hubDown?.let { h -> hubDown = null; startWind(h[0], h[1], h[2], hubLeft) }
+                }
                 wakeLegends(C, x, y)
                 wind?.let { (hx, hy, a0) ->
                     val a = atan2(y - hy, x - hx)
@@ -845,6 +887,8 @@ class StageView(ctx: Context) : View(ctx) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(pickUp)
+                removeCallbacks(showCard); hubDown = null
+                if (cardShown) { cardShown = false; swipeFrom = null; invalidate(); return true }
                 if (carry != null) { endCarry(G, x, y, e.actionMasked == MotionEvent.ACTION_UP); downSlot = null; return true }
                 downSlot = null
                 if (indexing) { indexing = false; railTouchedAt = SystemClock.uptimeMillis(); invalidate(); return true }

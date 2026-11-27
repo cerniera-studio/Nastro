@@ -2,13 +2,13 @@
 
 A cassette Walkman for the Galaxy Z Fold8 Ultra, built from the tapes and the light-blue Sony WM-EX610 of 2001.
 
-**The fold is the door.** Folded, the cover screen is the Walkman's face: the tape behind smoked acrylic, a readout with a tape counter, four round keys and the printed switches. Unfolding swings that face open on the crease. The right half is the compartment it covered, with the tape at full colour on its spindles and the head and pinch roller at its foot. The left half is the inside of the door, where your tapes are kept, joined to the body by hinge knuckles on the crease. The tape is drawn no bigger than a real one, so the phone itself becomes the Walkman. Folding shuts it with a clunk.
+**The fold is the door.** Folded, the cover screen is the Walkman's face: a window onto the whole tape and its label, four round keys and the printed switches. Hold the window and the J-card slides up with the side's tracks, a tick by the one playing. Unfolding swings that face open on the crease. The right half is the compartment it covered, with the tape at full colour on its spindles and the head and pinch roller at its foot. The left half is the inside of the door, where your tapes are kept, joined to the body by hinge knuckles on the crease. The tape is drawn no bigger than a real one, so the phone itself becomes the Walkman. Folding shuts it with a clunk.
 
 Every album on the phone is dubbed onto the shortest cassette that holds it (C60, C90 or C120), split into sides at the track nearest half way, with its label written by hand. The shells are drawn from real tapes of the period, without makers' marks.
 
 ## How it behaves
 
-- **Tape physics.** Tape runs at 4.76 cm/s. Each reel turns at tape speed over its own radius, so the nearly empty hub spins fastest. The counter counts turns of the take-up reel.
+- **Tape physics.** Tape runs at 4.76 cm/s. Each reel turns at tape speed over its own radius, so the nearly empty hub spins fastest.
 - **Keys.** ▶ plays. ■ stops; folded, pressing it again opens the door to the shelf. ▶▶ and ◀◀ during play wind to the next gap or back to the start of the track (the EX610's music sensor). Stopped, they wind at 30 times play speed.
 - **By hand.** Spin a reel with your finger to wind the tape. Swipe the tape sideways to turn it over.
 - **Printed switches.** Auto reverse, Mega Bass (the platform bass boost) and Hold. They brighten as your finger comes near.
