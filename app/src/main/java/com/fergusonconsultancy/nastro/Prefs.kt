@@ -59,6 +59,23 @@ object Prefs {
         sp.edit().putFloat("anchorX", x).putFloat("anchorY", y).apply()
     }
 
+    /**
+     * The tape's size and place, shared between the two screens (28 Nov 2026). Mechack: the cover's tape
+     * is as big as the cover allows, and the open compartment's tape follows it. Pixels can't be shared
+     * (the screens differ in density, and the main screen's reported density isn't trusted), so each is
+     * kept as a fraction of the screen's height, on the assumption that the cover and the inner screen
+     * are about the same height on the phone. coverK: the cover's px per mm over its height; coverCy:
+     * where the cover's tape centre sits down the screen; mainMax: the largest px per mm the open
+     * compartment has room for, over its height, so the cover never draws a tape the open phone can't match.
+     */
+    fun tapeF(key: String): Float = if (::sp.isInitialized) sp.getFloat("tape_$key", 0f) else 0f
+    fun setTapeF(key: String, v: Float) {
+        if (!::sp.isInitialized || v <= 0f) return
+        val old = tapeF(key)
+        if (old > 0f && kotlin.math.abs(old - v) <= old * 0.002f) return
+        sp.edit().putFloat("tape_$key", v).apply()
+    }
+
     /** artist, album or newest */
     var order: String get() = s("order", "artist"); set(v) = put("order", v)
 }

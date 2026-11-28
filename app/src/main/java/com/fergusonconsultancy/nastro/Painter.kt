@@ -56,6 +56,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     /** The touch area over the tape: the lens, or the compartment. */
     lateinit var win: RectF
     var k = 1f; var tx = 0f; var ty = 0f
+    /** The open compartment: the largest scale it has room for, before any cap from the cover. */
+    var kMax = 0f
     var legends: List<Legend> = emptyList()
     var lid: RectF? = null
     var lens: RectF? = null
@@ -89,14 +91,13 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
         const val CW = 100.4f
         const val CH = 63.8f
         /**
-         * The face's window (27 Nov 2026), in the cassette's millimetres: across its height and along
-         * its length. It shows the whole face of the shell but a few millimetres at the edges, the label
-         * included; on a screen without room for that it shrinks to the MIN sizes before the tape does.
+         * The face's window, in the cassette's millimetres: across its height and along its length.
+         * 28 Nov 2026, Mechack: the window onto the whole shell was far too big. Back to a pill over the
+         * reels and their packs, as on the WM-10, while the tape behind it is now as big as the lid holds.
          */
-        const val WIN_ACROSS = 56f
-        const val WIN_ALONG = 92f
-        const val WIN_MIN_ACROSS = 52f
-        const val WIN_MIN_ALONG = 74f
+        const val WIN_ACROSS = 34f
+        const val WIN_ALONG = 80f
+        private const val REEL_Y = -2f
 
         /**
          * [x], [y], [w], [h] is the safe area for the parts (clear of the camera and system bars);
@@ -136,12 +137,12 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val topBand = ld.height() * 0.075f + 0.03f * u
             val botBand = ld.height() * 0.075f + 0.115f * u
             val roomW = ld.width() * 0.92f; val roomH = ld.height() - topBand - botBand
-            k = min(roomW / WIN_MIN_ALONG, roomH / WIN_MIN_ACROSS).let { if (mm > 0f) min(it, mm) else it }
+            k = min(ld.width() * 0.96f / CW, ld.height() * 0.96f / CH).let { if (mm > 0f) min(it, mm) else it }
             val along = min(WIN_ALONG, roomW / k); val across = min(WIN_ACROSS, roomH / k)
             val lcx = ld.centerX(); val lcy = ld.top + topBand + roomH / 2
             val ln = RectF(lcx - along / 2 * k, lcy - across / 2 * k, lcx + along / 2 * k, lcy + across / 2 * k)
             lens = ln
-            tx = lcx; ty = lcy
+            tx = lcx; ty = lcy - REEL_Y * k
             win = RectF(ln)
             val wr = bleed?.right ?: (x + w)
             wheel = RectF(wr - 0.03f * u, chan.top, wr + 0.015f * u, chan.top + 0.36f * u)
@@ -200,21 +201,17 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             // the window keeps clear of AUTO REVERSE above it and the wordmark below
             val topBand = ld.height() * 0.06f + 0.03f * w
             val botBand = ld.height() * 0.075f + 0.115f * w
-            val roomW = ld.width() * 0.92f; val roomH = ld.height() - topBand - botBand
-            k = min(roomW / WIN_MIN_ACROSS, roomH / WIN_MIN_ALONG).let { if (mm > 0f) min(it, mm) else it }
-            val across = min(WIN_ACROSS, roomW / k); val along = min(WIN_ALONG, roomH / k)
-            var lcx = ld.centerX(); var lcy = ld.top + topBand + roomH / 2
-            // 14 Nov 2026, Mechack: the tape behind the window must line up with the tape in the open
-            // compartment. Folded, the door lies over the compartment, the hinge on the left, so the tape is
-            // on the same spot: as far from the hinge edge and from the top as it is unfolded. The window
-            // follows it, kept on the lid and clear of the engraving.
-            if (anchor != null && bleed != null) {
-                lcx = clampSafe(bleed.left + anchor.first, ld.left + across / 2 * k + 0.02f * w, ld.right - across / 2 * k - 0.02f * w)
-                lcy = clampSafe(bleed.top + anchor.second, ld.top + topBand + along / 2 * k, ld.bottom - botBand - along / 2 * k)
-            }
+            val roomH = ld.height() - topBand - botBand
+            // 28 Nov 2026, Mechack: the cover's tape as big as physically possible, the whole shell held
+            // inside the lid; it is the reference the open compartment follows. [mm], when given, is the
+            // most the open compartment can match, so the two stay one size.
+            k = min(ld.width() * 0.96f / CH, ld.height() * 0.98f / CW).let { if (mm > 0f) min(it, mm) else it }
+            val across = WIN_ACROSS; val along = min(WIN_ALONG, roomH / k)
+            val lcx = ld.centerX(); val lcy = ld.top + topBand + roomH / 2
             val ln = RectF(lcx - across / 2 * k, lcy - along / 2 * k, lcx + across / 2 * k, lcy + along / 2 * k)
             lens = ln
-            tx = lcx; ty = lcy
+            // the pill sits over the reels, which are 2 mm above the shell's middle
+            tx = lcx + REEL_Y * k; ty = lcy
             win = RectF(ln)
             chan = RectF(x + 0.055f * w, ld.bottom + 0.05f * w, x + 0.945f * w, ld.bottom + 0.24f * w)
             keys = keyRow(chan)
@@ -235,8 +232,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
          * [mm] is the screen's pixels per millimetre: the tape is drawn at its real size where it fits,
          * so the phone itself becomes the Walkman.
          */
-        fun bay(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f): PlayerGeom =
-            if (w > h * 1.05f) bayWide(x, y, w, h, bleed, mm) else bayTall(x, y, w, h, bleed, mm)
+        fun bay(x: Float, y: Float, w: Float, h: Float, bleed: RectF? = null, mm: Float = 0f, cy: Float = -1f): PlayerGeom =
+            if (w > h * 1.05f) bayWide(x, y, w, h, bleed, mm) else bayTall(x, y, w, h, bleed, mm, cy)
 
         private fun PlayerGeom.noFace() {
             lcd = RectF(); chan = RectF(); keys = emptyList(); keyPlate = null; legends = emptyList(); hold = null; wheel = null; battery = null
@@ -257,7 +254,7 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
         private const val GAP = 3f          // mm of body between the two holes
         const val LIP = 1.8f                // mm: each hole's raised lip
 
-        private fun bayTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF?, mm: Float): PlayerGeom = PlayerGeom(Kind.BAY, x, w).apply {
+        private fun bayTall(x: Float, y: Float, w: Float, h: Float, bleed: RectF?, mm: Float, cy: Float = -1f): PlayerGeom = PlayerGeom(Kind.BAY, x, w).apply {
             this.y = y; this.h = h
             noFace()
             radius = if (bleed != null) 0f else w * 0.08f
@@ -267,18 +264,24 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             // the width is what limits the tape upright, so the hole uses the body's whole width, edge to edge
             val bw = (bleed?.width() ?: w) * 0.995f
             var kk = min(bw / cwMm, (h * 0.97f) / groupMm)
+            kMax = kk
             if (mm > 0f) kk = min(kk, mm)
             k = kk
             // 14 Nov 2026, Mechack: use the space at either end. The tape can't grow (the width holds it),
             // so the hole runs on past its ends and shows what a Walkman hides there: the motor and its
             // belt at one end, the reel gears at the other
             ends = ((h * 0.97f / k - groupMm) / 2f).coerceIn(0f, 26f)
-            val chMm = CW + CLEAR * 2 + ends * 2
             // 14 Nov 2026, Mechack: the AA bay down at the foot; the compartment centred in the rest
             val cx = bleed?.centerX() ?: (x + w / 2)
             val cellTop = y + h - (CELL + LIP) * k
             val room = cellTop - (GAP + LIP * 2) * k - y
-            val top = y + max(LIP * k, (room - chMm * k) / 2)
+            // 28 Nov 2026: the tape sits as far down the screen as it does behind the cover's window; the
+            // drive showing at its ends shortens to make room
+            val tapeHalf = (CW / 2 + CLEAR) * k
+            val want = if (cy >= 0f) clampSafe(cy, y + LIP * k + tapeHalf, y + room - tapeHalf) else -1f
+            if (want >= 0f) ends = min(ends, ((min(want - y - LIP * k, y + room - want) - tapeHalf) / k).coerceAtLeast(0f))
+            val chMm = CW + CLEAR * 2 + ends * 2
+            val top = if (want >= 0f) want - chMm * k / 2 else y + max(LIP * k, (room - chMm * k) / 2)
             val c = RectF(cx - cwMm * k / 2, top, cx + cwMm * k / 2, top + chMm * k)
             comp = c
             val cl = RectF(c.left, cellTop, c.right, cellTop + CELL * k)
@@ -1343,21 +1346,33 @@ class Painter(ctx: Context) {
         // the seam's lit edge; on lacquer, a champagne coachline
         s.strokeWidth = dp(0.6f); s.color = if (F.coach) 0x8CD9BB86.toInt() else Color.WHITE.a(0.5f); r.set(Ld.left + dp(0.4f), Ld.top + dp(0.4f), Ld.right - dp(0.4f), Ld.bottom - dp(0.4f)); c.drawRoundRect(r, lr, lr, s)
 
-        lens(c, G, detail, live.lifting, live.jcard, live.glyph)
+        lens(c, G, detail, live.lifting)
 
         val fs = max(dp(9f), G.u * 0.034f)
         engrave(c, "AUTO REVERSE", Ld.right - Ld.width() * 0.07f, Ld.top + Ld.height() * (if (G.wide) 0.075f else 0.06f), fs, F, Paint.Align.RIGHT, 0.2f)
         // the wordmark, deep-cut
         engrave(c, "NASTRO", Ld.centerX(), Ld.bottom - Ld.height() * 0.075f, min(G.u * 0.11f, dp(44f)), F, Paint.Align.CENTER, 0.42f)
+        // 28 Nov 2026: the pill is too narrow to read a card in, so the J-card slides up over the lid
+        Deck.tape?.let { tape -> if (live.jcard > 0.001f) {
+            c.save(); path.reset(); path.addRoundRect(Ld, lr, lr, Path.Direction.CW); c.clipPath(path)
+            val L = RectF(Ld)
+            val up = if (live.glyph > 45f) 90f else if (live.glyph < -45f) -90f else 0f
+            if (up == 0f) jCard(c, L, tape, live.jcard)
+            else {
+                c.rotate(up, L.centerX(), L.centerY())
+                val hw = L.height() / 2; val hh = L.width() / 2
+                jCard(c, RectF(L.centerX() - hw, L.centerY() - hh, L.centerX() + hw, L.centerY() + hh), tape, live.jcard)
+            }
+            c.restore()
+        } }
 
         keys(c, G, F, live)
         strip(c, G, F, detail, live)
     }
 
-    private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean, jcard: Float = 0f, glyph: Float = 0f) {
+    private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean) {
         val L = G.lens ?: return
-        // 27 Nov 2026: a window onto the whole shell, its corners rounded as a Walkman's window is
-        val rad = min(min(L.width(), L.height()) / 2, 5.5f * G.k)
+        val rad = min(L.width(), L.height()) / 2
         r.set(L.left - dp(2f), L.top - dp(2f), L.right + dp(2f), L.bottom + dp(2f))
         p.shader = LinearGradient(L.left, L.top, L.right, L.bottom, intArrayOf(0xFFF4F6F8.toInt(), 0xFF8B939C.toInt(), 0xFFD9DEE3.toInt()), null, Shader.TileMode.CLAMP)
         c.drawRoundRect(r, rad + dp(2f), rad + dp(2f), p); p.shader = null
@@ -1374,18 +1389,6 @@ class Painter(ctx: Context) {
             val facing = if (Deck.flipping && Deck.flip > 0.5f) (if (Deck.facing == 'A') 'B' else 'A') else Deck.facing
             turn = G.rot; cassette(c, tape, true, detail, facing, spindle = true, shadow = 5f); turn = 0f
             c.restore()
-        }
-        // held, the J-card slides up over the tape, inside the glass
-        if (tape != null && jcard > 0.001f) {
-            // folded and on its side the face turns with the phone, but the card is read: it turns to stand upright
-            val up = if (glyph > 45f) 90f else if (glyph < -45f) -90f else 0f
-            if (up == 0f) jCard(c, L, tape, jcard)
-            else {
-                c.save(); c.rotate(up, L.centerX(), L.centerY())
-                val hw = L.height() / 2; val hh = L.width() / 2
-                jCard(c, RectF(L.centerX() - hw, L.centerY() - hh, L.centerX() + hw, L.centerY() + hh), tape, jcard)
-                c.restore()
-            }
         }
         fill(0x1A101822); c.drawRect(L, p)
         // the glass's glare slides as the phone tilts

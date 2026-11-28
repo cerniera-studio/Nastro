@@ -282,27 +282,6 @@ class StageView(ctx: Context) : View(ctx) {
         if (t != 0) Light.rotation = android.view.Surface.ROTATION_0
     }
 
-    /** The screen's own pixels per millimetre: the tape is drawn no bigger than a real one. */
-    private val pxPerMm get() = resources.displayMetrics.xdpi / 25.4f
-
-    /**
-     * The scale to draw the tape at on this layout, in px per mm (14 Nov 2026). Mechack: the tape
-     * behind the cover's lens looked bigger than the one in the open compartment; one tape, one size.
-     * Each screen's upright layout records how big the tape can be there, as a fraction of its real
-     * size; every layout draws it no bigger than both screens allow, so it is the same physical size
-     * folded and open.
-     */
-    private fun matched(here: String?, other: String, geom: (Float) -> PlayerGeom): Float {
-        // 24 Nov 2026: no longer matched in pixels. That took the two screens to share one density, but
-        // the open phone's 1880 px span a screen about 136 mm wide (roughly 350 ppi) against the cover's
-        // roughly 420, so equal pixels made the open tape the smaller one, and held the cover's back to it.
-        // The size the two share is the real one: each screen draws the tape as near its real size as it
-        // has room for. Open and upright, the half screen is barely wider than a cassette, so the room
-        // runs out at about its real size; it needs no cap there, which also keeps the open screen's
-        // reported dpi (not trusted) out of it. Folded, the cover's own dpi holds it to life size.
-        return if (here == "main") 0f else pxPerMm
-    }
-
     private fun layoutAll() {
         val L = pl.toFloat(); val T = pt.toFloat()
         val W = (fw - pl - pr).toFloat(); val H = (fh - pt - pb).toFloat()
@@ -315,9 +294,10 @@ class StageView(ctx: Context) : View(ctx) {
             val half = Hf / 2f
             val g = dp(10f)
             val bleed = RectF(0f, 0f, Wf, half)
-            val m = matched("main", "cover") { PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, it) }
-            deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
-            face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed, m)
+            // the cover's tape size, carried over (as a share of the screen's height)
+            val ck = Prefs.tapeF("coverK") * Hf
+            deck = PlayerGeom.bay(L + g, T + g, W - g * 2, half - T - g * 2, bleed, ck)
+            face = PlayerGeom.face(L + g, T + g, W - g * 2, half - T - g * 2, bleed, deck?.k ?: 0f)
             shelfBg.set(0f, half, Wf, Hf)
             if (tabletop) {
                 // the lower half is the deck's front panel; there is no shelf to reach
@@ -333,10 +313,14 @@ class StageView(ctx: Context) : View(ctx) {
             val bleed = RectF(half, 0f, Wf, Hf)
             // the hole runs across the body's whole width: under the hinge one side, the bezel the other
             val bw = Wf - pr - half
-            val m = matched("main", "cover") { PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, it) }
-            deck = PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, m)
-            face = PlayerGeom.face(half + g, T + g, bw, H - g * 2, bleed, m)
-            deck?.let { Prefs.setAnchor(it.tx - half, it.ty) }
+            // 28 Nov 2026, Mechack: the cover's tape is the reference. Open, the tape takes the cover's size
+            // and sits as far down the screen as it does there, both read as shares of the screen's height;
+            // and the most this half has room for is kept, so the cover never outgrows it
+            val ck = Prefs.tapeF("coverK") * Hf
+            val cy = Prefs.tapeF("coverCy") * Hf
+            deck = PlayerGeom.bay(half, T + g, bw, H - g * 2, bleed, ck, if (ck > 0f && cy > 0f) cy else -1f)
+            face = PlayerGeom.face(half + g, T + g, bw, H - g * 2, bleed, deck?.k ?: 0f)
+            deck?.let { Prefs.setTapeF("mainMax", it.kMax / Hf) }
             shelfBg.set(0f, 0f, half, Hf)
             shelfArea.set(L + dp(12f), T + dp(6f), half - dp(12f), T + H - dp(6f))
         } else {
@@ -344,8 +328,10 @@ class StageView(ctx: Context) : View(ctx) {
             val off = v * Wf * 1.04f
             val g = dp(8f)
             val bleed = RectF(off, 0f, Wf + off, Hf)
-            val m = matched(if (H > W) "cover" else null, "main") { PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, bleed, it) }
-            deck = PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, bleed, m, if (H > W) Prefs.anchor() else null)
+            // the cover's tape as big as its lid holds, but never bigger than the open compartment can match
+            val cap = Prefs.tapeF("mainMax") * Hf
+            deck = PlayerGeom.face(L + g + off, T + g, W - g * 2, H - g * 2, bleed, cap)
+            if (H > W) deck?.let { Prefs.setTapeF("coverK", it.k / Hf); Prefs.setTapeF("coverCy", it.ty / Hf) }
             val so = (1 - v) * Wf * 1.04f
             shelfBg.set(-so, 0f, Wf - so, Hf)
             shelfArea.set(L + dp(10f) - so, T + dp(6f), L + W - dp(10f) - so, T + H - dp(6f))
