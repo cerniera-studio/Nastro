@@ -1436,18 +1436,6 @@ class Painter(ctx: Context) {
         fill(if (lit) (0xFFFFAD33.toInt()).a(0.75f) else 0xFF4A3012.toInt())
         var d = gap
         while (d < len - gap * 0.5f) { pm.getPosTan(d, pt, null); c.drawCircle(pt[0], pt[1], br * 0.55f, p); d += gap }
-        // the track under the window: which side, which track of how many
-        val L = G.lens ?: return
-        val Ld = G.lid ?: return
-        if (tape == null || detail < 0.05f) return
-        val fs = max(dp(9f), G.u * 0.034f)
-        val wordTop = Ld.bottom - Ld.height() * 0.075f - min(G.u * 0.11f, dp(44f)) * 0.75f
-        if (wordTop - L.bottom < fs * 2.4f) return
-        val now = Deck.current()
-        val label = "SIDE ${Deck.sideLetter}  ·  TRACK ${now.index + 1} OF ${max(1, Deck.trackCount())}"
-        c.saveLayerAlpha(Ld.left, L.bottom, Ld.right, wordTop, (detail * 0.85f * 255).toInt())
-        engrave(c, label, L.centerX(), (L.bottom + wordTop) / 2 + fs * 0.35f, fs, finish(), Paint.Align.CENTER, 0.2f)
-        c.restore()
     }
 
     private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean) {

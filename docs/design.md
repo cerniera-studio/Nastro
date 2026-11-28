@@ -222,4 +222,4 @@ Mechack chose Fanale from the five concepts in the studio ("Nastro studio: pushi
 - **The bar.** A dark lamp housing runs up the lid's hinge edge (the left, folded). Its beads are the side, bottom to top: lit beads are what has played, one bright head where the tape is now (glowing more while the tape moves, and more again in a dark room), unlit beads holding an ember.
 - **The gaps.** A bead is left out wherever a track starts, so the music sensor's gaps can be seen; beads past the end of the music, the blank tail, are dark.
 - **Ring and bar, one lamp.** A fine beaded line runs from the bar's foot under rewind into the ring round play, lit while the tape plays. Turned on its side, it follows play as the keys glide into their reversed order.
-- **Under the window**, engraved and fading during fast wind (Concentrato): SIDE A · TRACK 3 OF 7.
+- **Nothing written under the window** (Mechack, 28 Nov). A first build engraved SIDE A · TRACK 3 OF 7 there; an engraving is permanent, so words that change with the tape had no logic, and the bar and its gaps already say it.
