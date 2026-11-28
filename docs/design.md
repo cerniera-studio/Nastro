@@ -214,3 +214,12 @@ Mechack, from two recordings: the window onto the whole shell was far too big, a
 **The window** is a pill over the reels and their packs again (34 by 80 mm of the shell), as on the WM-10. Holding it brings the J-card up over the whole lid, since the pill is too narrow to read a card in.
 
 Concepts for the cover face pushed to the mandate's edges are on the design canvas "Nastro: pushing the mandate": Batteria, Fanale, Catenaria, Nastro libero and Colonna.
+
+## Thirteenth review, 28 Nov: Fanale
+
+Mechack chose Fanale from the five concepts in the studio ("Nastro studio: pushing the mandate"). The Alfa rear lamp, a ring of beads with a beaded bar running inboard, becomes the counter the readout took with it.
+
+- **The bar.** A dark lamp housing runs up the lid's hinge edge (the left, folded). Its beads are the side, bottom to top: lit beads are what has played, one bright head where the tape is now (glowing more while the tape moves, and more again in a dark room), unlit beads holding an ember.
+- **The gaps.** A bead is left out wherever a track starts, so the music sensor's gaps can be seen; beads past the end of the music, the blank tail, are dark.
+- **Ring and bar, one lamp.** A fine beaded line runs from the bar's foot under rewind into the ring round play, lit while the tape plays. Turned on its side, it follows play as the keys glide into their reversed order.
+- **Under the window**, engraved and fading during fast wind (Concentrato): SIDE A · TRACK 3 OF 7.

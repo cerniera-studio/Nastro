@@ -79,6 +79,8 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
     var rot = 90f
     /** The size the controls are drawn to: the width in portrait, the controls' column in landscape. */
     var u = w
+    /** Fanale: the lamp's housing up the lid's hinge edge, the side's bar of light (folded face only). */
+    var bar: RectF? = null
     /** The raised plate the keys are sunk into (open deck only). */
     var keyPlate: RectF? = null
     val wide get() = rot == 0f
@@ -210,6 +212,9 @@ class PlayerGeom private constructor(val kind: Kind, val x: Float, val w: Float)
             val lcx = ld.centerX(); val lcy = ld.top + topBand + roomH / 2
             val ln = RectF(lcx - across / 2 * k, lcy - along / 2 * k, lcx + across / 2 * k, lcy + along / 2 * k)
             lens = ln
+            // Fanale (28 Nov 2026): the lamp's housing runs up the lid's hinge edge, the left when folded
+            val bw = 0.066f * w
+            bar = RectF(ld.left + 0.025f * w, ld.top + 0.045f * w, ld.left + 0.025f * w + bw, ld.bottom - 0.045f * w)
             // the pill sits over the reels, which are 2 mm above the shell's middle
             tx = lcx + REEL_Y * k; ty = lcy
             win = RectF(ln)
@@ -1347,6 +1352,7 @@ class Painter(ctx: Context) {
         s.strokeWidth = dp(0.6f); s.color = if (F.coach) 0x8CD9BB86.toInt() else Color.WHITE.a(0.5f); r.set(Ld.left + dp(0.4f), Ld.top + dp(0.4f), Ld.right - dp(0.4f), Ld.bottom - dp(0.4f)); c.drawRoundRect(r, lr, lr, s)
 
         lens(c, G, detail, live.lifting)
+        G.bar?.let { fanale(c, G, it, detail, live) }
 
         val fs = max(dp(9f), G.u * 0.034f)
         engrave(c, "AUTO REVERSE", Ld.right - Ld.width() * 0.07f, Ld.top + Ld.height() * (if (G.wide) 0.075f else 0.06f), fs, F, Paint.Align.RIGHT, 0.2f)
@@ -1368,6 +1374,80 @@ class Painter(ctx: Context) {
 
         keys(c, G, F, live)
         strip(c, G, F, detail, live)
+    }
+
+    // ---- Fanale (28 Nov 2026) ------------------------------------------------------------------------
+    // Mechack chose it from five concepts that pushed the mandate. The Alfa rear lamp, a ring of beads
+    // with a beaded bar running inboard, is play's bead ring running on into a bar of light up the lid's
+    // hinge edge. The bar is the side, bottom to top: lit beads are what has played, one bright head
+    // where the tape is now, unlit beads holding an ember. A bead is left out wherever a track changes,
+    // so the music sensor's gaps can be seen, and beads past the end of the music (the blank tail) are
+    // dark. It is the counter the readout took with it, returned as light.
+    private fun fanale(c: Canvas, G: PlayerGeom, B: RectF, detail: Float, live: Live) {
+        val tape = Deck.tape
+        val rad = B.width() / 2
+        fill(0xFF0B0C0D.toInt()); c.drawRoundRect(B, rad, rad, p)
+        s.strokeWidth = dp(0.8f); s.color = Color.WHITE.a(0.10f); r.set(B.left + dp(0.4f), B.top + dp(0.4f), B.right - dp(0.4f), B.bottom - dp(0.4f)); c.drawRoundRect(r, rad, rad, s)
+        val br = B.width() * 0.13f
+        val top = B.top + rad; val bot = B.bottom - rad
+        val n = max(12, ((bot - top) / (B.width() * 0.55f)).toInt())
+        val step = (bot - top) / (n - 1)
+        val frac = if (tape != null) Deck.sideFrac().toFloat() else 0f
+        val marks = if (tape != null) Deck.trackMarks() else emptyList()
+        val end = if (tape != null) Deck.musicEnd().toFloat() else 1f
+        val m = Deck.mode
+        val moving = m == Deck.Mode.PLAY || m == Deck.Mode.AMS || m == Deck.Mode.FF || m == Deck.Mode.REW || Deck.dragging
+        val headI = (frac * (n - 1)).let { kotlin.math.round(it).toInt() }.coerceIn(0, n - 1)
+        val glow = 0.55f + 0.45f * live.dark
+        for (i in 0 until n) {
+            val f = i / (n - 1f)
+            if (marks.any { kotlin.math.abs(it - f) < 0.5f / (n - 1) }) continue
+            val cy = bot - i * step; val cx = B.centerX()
+            val blank = f > end + 0.5f / (n - 1)
+            when {
+                i == headI -> {
+                    p.shader = RadialGradient(cx, cy, br * 6, (0xFFFFAD33.toInt()).a(if (moving) 0.6f * glow else 0.3f * glow), 0, Shader.TileMode.CLAMP)
+                    c.drawCircle(cx, cy, br * 6, p); p.shader = null
+                    fill(0xFFFFF3DC.toInt()); c.drawCircle(cx, cy, br * 1.25f, p)
+                }
+                i < headI -> {
+                    p.shader = RadialGradient(cx, cy, br * 3, (0xFFFFA028.toInt()).a(0.32f * glow), 0, Shader.TileMode.CLAMP)
+                    c.drawCircle(cx, cy, br * 3, p); p.shader = null
+                    fill(0xFFFFAD33.toInt()); c.drawCircle(cx, cy, br, p)
+                }
+                blank -> { fill(0xFF1C1A17.toInt()); c.drawCircle(cx, cy, br * 0.85f, p) }
+                else -> { fill(0xFF4A3012.toInt()); c.drawCircle(cx, cy, br, p) }
+            }
+        }
+        // the bar runs on into the ring round play: a fine beaded line from its foot, under rewind
+        val keys = G.keys; val rev = G.keysRev
+        val playA = keys.firstOrNull { it.key == Deck.Key.PLAY } ?: return
+        val playB = rev.firstOrNull { it.key == Deck.Key.PLAY } ?: playA
+        val o = live.order
+        val pcx = playA.cx + (playB.cx - playA.cx) * o; val pcy = playA.cy + (playB.cy - playA.cy) * o
+        val ringR = playA.r * 1.18f
+        val yLine = pcy + ringR + B.width() * 0.35f
+        path.reset(); path.moveTo(B.centerX(), B.bottom); path.lineTo(B.centerX(), yLine - rad)
+        path.quadTo(B.centerX(), yLine, B.centerX() + rad, yLine)
+        path.lineTo(pcx - rad, yLine); path.quadTo(pcx, yLine, pcx, pcy + ringR)
+        val pm = android.graphics.PathMeasure(path, false)
+        val len = pm.length; val gap = br * 3.2f; val pt = FloatArray(2)
+        val lit = Deck.mode == Deck.Mode.PLAY
+        fill(if (lit) (0xFFFFAD33.toInt()).a(0.75f) else 0xFF4A3012.toInt())
+        var d = gap
+        while (d < len - gap * 0.5f) { pm.getPosTan(d, pt, null); c.drawCircle(pt[0], pt[1], br * 0.55f, p); d += gap }
+        // the track under the window: which side, which track of how many
+        val L = G.lens ?: return
+        val Ld = G.lid ?: return
+        if (tape == null || detail < 0.05f) return
+        val fs = max(dp(9f), G.u * 0.034f)
+        val wordTop = Ld.bottom - Ld.height() * 0.075f - min(G.u * 0.11f, dp(44f)) * 0.75f
+        if (wordTop - L.bottom < fs * 2.4f) return
+        val now = Deck.current()
+        val label = "SIDE ${Deck.sideLetter}  ·  TRACK ${now.index + 1} OF ${max(1, Deck.trackCount())}"
+        c.saveLayerAlpha(Ld.left, L.bottom, Ld.right, wordTop, (detail * 0.85f * 255).toInt())
+        engrave(c, label, L.centerX(), (L.bottom + wordTop) / 2 + fs * 0.35f, fs, finish(), Paint.Align.CENTER, 0.2f)
+        c.restore()
     }
 
     private fun lens(c: Canvas, G: PlayerGeom, detail: Float, lifting: Boolean) {

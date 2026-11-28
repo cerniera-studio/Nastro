@@ -119,6 +119,16 @@ object Deck {
     private fun xFromSidePos(s: Double): Double { val L = tape?.sideSecs ?: 1.0; return if (dir > 0) s / L else 1 - s / L }
     private fun sideEnd(): Double = tape?.let { if (dir > 0) it.aEnd else it.bEnd } ?: 0.0
 
+    /**
+     * Fanale (28 Nov 2026): how far through the side the tape is, 0 to 1, as the bar of light shows it;
+     * where each track after the first starts, and where the music ends (the blank tail beyond), as
+     * fractions of the side.
+     */
+    fun sideFrac(): Double = if (dir > 0) x else 1 - x
+    fun trackMarks(): List<Double> { val L = tape?.sideSecs ?: return emptyList(); return sideList().drop(1).map { it.start / L } }
+    fun musicEnd(): Double = sideEnd()
+    fun trackCount(): Int = sideList().size
+
     class Now(val track: Track?, val index: Int, val into: Double)
     fun current(): Now {
         val p = sidePos(); val L = sideList()
