@@ -202,3 +202,15 @@ Mechack: the readout repeats what the now-playing notification already says. Tak
 **A window onto the whole cassette.** The lid now runs from the top of the face to the keys. The slim lens over the hubs is now a window with rounded corners showing the whole face of the shell (56 by 92 mm where it fits, the label included), at the tape's real size, the same size and position as in the open compartment. Where the lid is shorter, the window shows less of the shell's ends first, keeping clear of AUTO REVERSE above and the wordmark below.
 
 **The J-card, on touch.** Hold the window still and the J-card slides up over the glass inside the window: its spine in the album's colour, written with the album (or the mixtape's name) and the cover in the corner, then SIDE A or B and that side's tracks written in biro, a pencil tick by the one playing. A long side scrolls so the playing track is in view. Let go and it slides away. Turned on its side, the face still turns with the phone but the card turns to stand upright, as the keys' symbols do. A finger that moves instead winds the reel it is on (which now starts once the finger moves about 8 dp rather than at the first touch, so a held finger doesn't stop the tape) or turns the tape over. Folded only: open, the tape is in your hand's reach and the card stays in its case.
+
+## Twelfth review, 28 Nov: the cover's tape is the reference
+
+Mechack, from two recordings: the window onto the whole shell was far too big, and the tapes on the two screens still didn't line up. The cover's tape should be as big as physically possible, and the open compartment's tape should follow it.
+
+**Why they didn't line up.** The cover drew the tape at life size from the cover's reported density, while the open half, barely wider than a cassette, drew it as big as its width allowed: two different sizes. The position was carried across in pixels between screens of different densities.
+
+**Now.** The cover's tape is as big as its lid holds, the whole shell inside the lid. Its size and how far down the screen it sits are kept as shares of the screen's height (assuming the cover and inner screens are about the same height on the phone: general knowledge, not measured), and the open compartment takes both, its drive ends shortening to make room. The open half also records the most it has room for, so the cover never draws a tape the open phone can't match. Across the phone the two can't both be at their largest and on the same line unless the screens are the same width, so each is centred in its own width.
+
+**The window** is a pill over the reels and their packs again (34 by 80 mm of the shell), as on the WM-10. Holding it brings the J-card up over the whole lid, since the pill is too narrow to read a card in.
+
+Concepts for the cover face pushed to the mandate's edges are on the design canvas "Nastro: pushing the mandate": Batteria, Fanale, Catenaria, Nastro libero and Colonna.
